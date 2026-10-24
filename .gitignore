@@ -1,0 +1,44 @@
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+.pgpass
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Generated dependencies, build outputs, and caches
+**/node_modules/
+**/dist/
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/.cache/
+**/coverage/
+**/windows/flutter/ephemeral/
+**/*.pdb
+
+# Local databases, exports, and logs
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+*.backup
+*.bak
+*.sql.gz
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Installer staging and distributable binaries
+/packaging/stage/
+/artifacts/
+**/*.exe
+**/*.msi

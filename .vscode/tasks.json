@@ -1,0 +1,38 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Create Malligai Kadai Initial Admin",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"backend",
+				"run",
+				"admin:create"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run Malligai Kadai Backend",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"backend",
+				"run",
+				"dev"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run Malligai Kadai Windows App",
+			"type": "shell",
+			"command": "Set-Location malligai_kadai; flutter run -d windows",
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

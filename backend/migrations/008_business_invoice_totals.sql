@@ -1,0 +1,11 @@
+ALTER TABLE shop_settings
+  ADD COLUMN IF NOT EXISTS business_name VARCHAR(160) NOT NULL DEFAULT 'Thanigai Stores',
+  ADD COLUMN IF NOT EXISTS business_address TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS gstin VARCHAR(15) NOT NULL DEFAULT '';
+
+ALTER TABLE invoices
+  ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(14, 2) NOT NULL DEFAULT 0
+    CHECK (discount_amount >= 0),
+  ADD COLUMN IF NOT EXISTS business_name_snapshot VARCHAR(160) NOT NULL DEFAULT 'Thanigai Stores',
+  ADD COLUMN IF NOT EXISTS business_address_snapshot TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS gstin_snapshot VARCHAR(15) NOT NULL DEFAULT '';
