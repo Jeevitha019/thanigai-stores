@@ -15,6 +15,12 @@ import { ReportRepository } from './report-types';
 import { postgresReportRepository } from './postgres-report-repository';
 import { BillingRepository } from './billing-types';
 import { postgresBillingRepository } from './postgres-billing-repository';
+import { StockRepository } from './stock-types';
+import { postgresStockRepository } from './postgres-stock-repository';
+import {
+  validateOpeningStock,
+  validateStockPurchase,
+} from './stock-validation';
 import {
   BackupOperations,
   postgresBackupService,
@@ -49,6 +55,7 @@ interface AppOptions {
   onShutdown?: () => void;
   repository?: AuthRepository;
   productRepository?: ProductRepository;
+  stockRepository?: StockRepository;
   billingRepository?: BillingRepository;
   reportRepository?: ReportRepository;
   backupService?: BackupOperations;
@@ -124,6 +131,7 @@ export function createApp(options: AppOptions = {}) {
     options.initialSetupToken ?? process.env.INITIAL_SETUP_TOKEN;
   const repository = options.repository ?? postgresAuthRepository;
   const products = options.productRepository ?? postgresProductRepository;
+  const stocks = options.stockRepository ?? postgresStockRepository;
   const billing = options.billingRepository ?? postgresBillingRepository;
   const reports = options.reportRepository ?? postgresReportRepository;
   const backups = options.backupService ?? postgresBackupService;
@@ -218,25 +226,6 @@ export function createApp(options: AppOptions = {}) {
     const body = requestBody(request);
     const username = validateUsername(body.username);
     const password = validatePassword(body.password);
-    if (
-      !Array.isArray(body.sampleProducts) ||
-      body.sampleProducts.length > 1000
-    ) {
-      throw new HttpError(
-        400,
-        'The initial product catalogue must contain at most 1000 products.',
-      );
-    }
-    const sampleProducts = body.sampleProducts.map((product) => {
-      if (
-        product === null ||
-        typeof product !== 'object' ||
-        Array.isArray(product)
-      ) {
-        throw new HttpError(400, 'The initial product catalogue is invalid.');
-      }
-      return validateProductInput(product as Record<string, unknown>);
-    });
     const alreadyConfigured = await repository.hasAdmin();
     if (alreadyConfigured) {
       throw new HttpError(409, 'An admin account already exists.');
@@ -246,7 +235,6 @@ export function createApp(options: AppOptions = {}) {
       const user = await repository.createInitialAdmin(
         username,
         await hashPassword(password),
-        sampleProducts,
       );
       response.status(201).json({ user });
     } catch (error) {
@@ -336,6 +324,52 @@ export function createApp(options: AppOptions = {}) {
       }
       next();
     };
+
+  app.get(
+    '/stocks',
+    requireAuthentication,
+    requireRole('admin'),
+    async (_request, response) => {
+      response.status(200).json({ products: await stocks.list() });
+    },
+  );
+
+  app.put(
+    '/stocks/:id/opening',
+    requireAuthentication,
+    requireRole('admin'),
+    async (request, response) => {
+      const id = productIdParam(request);
+      const input = validateOpeningStock(requestBody(request));
+      const product = await stocks.setOpeningStock(
+        id,
+        input.quantity,
+        input.purchasePrice,
+        request.authenticatedUser!.id,
+      );
+      if (!product) throw new HttpError(404, 'Product not found.');
+      response.status(200).json({ product });
+    },
+  );
+
+  app.post(
+    '/stocks/:id/purchases',
+    requireAuthentication,
+    requireRole('admin'),
+    async (request, response) => {
+      const id = productIdParam(request);
+      const input = validateStockPurchase(requestBody(request));
+      const product = await stocks.receivePurchase(
+        id,
+        input.quantity,
+        input.purchasePrice,
+        input.purchaseDate,
+        request.authenticatedUser!.id,
+      );
+      if (!product) throw new HttpError(404, 'Product not found.');
+      response.status(201).json({ product });
+    },
+  );
 
   app.get('/auth/me', requireAuthentication, (request, response) => {
     response.status(200).json({ user: request.authenticatedUser });

@@ -14,10 +14,12 @@ import { getDatabasePool } from './database';
 import {
   calculateItemTax,
   centsToMoney,
-  lineTotalCents,
+  configuredLineTotalCents,
+  microsToUnitPrice,
   milliToQuantity,
   priceToCents,
   quantityToMilli,
+  unitPriceMicros,
 } from './billing-validation';
 
 interface InvoiceRow {
@@ -67,7 +69,13 @@ interface LockedProductRow {
   sku: string | null;
   unit: string;
   selling_price: string;
+  selling_quantity: string;
   is_active: boolean;
+}
+
+interface StockAllocation {
+  batchId: string;
+  quantity: string;
 }
 
 interface GstSettingsRow {
@@ -378,6 +386,44 @@ export class PostgresBillingRepository implements BillingRepository {
         return false;
       }
 
+      const soldBatches = await client.query<{
+        product_id: string;
+        stock_batch_id: string;
+        change_quantity: string;
+      }>(
+        `SELECT product_id, stock_batch_id, ABS(change_quantity)::text AS change_quantity
+         FROM inventory_movements
+         WHERE invoice_id = $1 AND reason = 'sale' AND stock_batch_id IS NOT NULL
+         ORDER BY stock_batch_id
+         FOR UPDATE`,
+        [id],
+      );
+      for (const movement of soldBatches.rows) {
+        const restoredQuantity = milliToQuantity(
+          quantityToMilli(movement.change_quantity),
+        );
+        await client.query(
+          `UPDATE stock_batches
+           SET remaining_quantity = remaining_quantity + $2, updated_at = NOW()
+           WHERE id = $1`,
+          [movement.stock_batch_id, restoredQuantity],
+        );
+        await client.query(
+          'UPDATE products SET stock_quantity = stock_quantity + $2, updated_at = NOW() WHERE id = $1',
+          [movement.product_id, restoredQuantity],
+        );
+        await client.query(
+          `INSERT INTO inventory_movements (
+             product_id, stock_batch_id, change_quantity, reason, created_by
+           ) VALUES ($1, $2, $3, 'adjustment', $4)`,
+          [
+            movement.product_id,
+            movement.stock_batch_id,
+            restoredQuantity,
+            actorId,
+          ],
+        );
+      }
       await client.query(
         `UPDATE invoices
          SET voided_at = NOW(), voided_by = $2, void_reason = $3
@@ -389,7 +435,10 @@ export class PostgresBillingRepository implements BillingRepository {
         action: 'invoice.voided',
         entityType: 'invoice',
         entityId: invoice.id,
-        details: { invoiceNumber: invoice.invoice_number },
+        details: {
+          invoiceNumber: invoice.invoice_number,
+          restoredStockBatches: soldBatches.rowCount ?? 0,
+        },
       });
       await client.query('COMMIT');
       return true;
@@ -476,7 +525,7 @@ export class PostgresBillingRepository implements BillingRepository {
       const interstate = request.saleStateCode !== settings.stateCode;
       const ids = request.items.map((item) => item.productId);
       const products = await client.query<LockedProductRow>(
-        `SELECT id, name, sku, unit, selling_price, is_active
+        `SELECT id, name, sku, unit, selling_price, selling_quantity, is_active
          FROM products WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE`,
         [ids],
       );
@@ -487,15 +536,22 @@ export class PostgresBillingRepository implements BillingRepository {
         if (!product || !product.is_active) {
           throw new HttpError(409, 'A product in the cart is no longer available.');
         }
-        const unitPriceCents = priceToCents(
-          item.unitPrice ?? product.selling_price,
-        );
+        const configuredPrice = item.unitPrice ?? product.selling_price;
+        const unitPriceCents = priceToCents(configuredPrice);
         if (unitPriceCents <= 0n) {
           throw new HttpError(409, `${product.name} has an invalid amount.`);
         }
-        const subtotalCents = lineTotalCents(
+        const sellingQuantityMilli = quantityToMilli(product.selling_quantity);
+        if (sellingQuantityMilli <= 0n) {
+          throw new Error(`Product ${product.id} has an invalid selling quantity.`);
+        }
+        const subtotalCents = configuredLineTotalCents(
           centsToMoney(unitPriceCents),
           item.quantity,
+          product.selling_quantity,
+        );
+        const unitPrice = microsToUnitPrice(
+          unitPriceMicros(configuredPrice, product.selling_quantity),
         );
         const tax = calculateItemTax(
           subtotalCents,
@@ -507,8 +563,51 @@ export class PostgresBillingRepository implements BillingRepository {
         if (tax.lineTotalCents > 99999999999999n) {
           throw new HttpError(400, `Line total for ${product.name} is too large.`);
         }
-        return { product, quantity: item.quantity, unitPriceCents, subtotalCents, tax };
+        return {
+          product,
+          quantity: item.quantity,
+          unitPrice,
+          subtotalCents,
+          tax,
+        };
       });
+
+      const allocationsByProduct = new Map<string, StockAllocation[]>();
+      for (const item of snapshots) {
+        const requiredMilli = quantityToMilli(item.quantity);
+        const availableBatches = await client.query<{
+          id: string;
+          remaining_quantity: string;
+        }>(
+          `SELECT id, remaining_quantity::text
+           FROM stock_batches
+           WHERE product_id = $1 AND remaining_quantity > 0
+           ORDER BY CASE WHEN batch_type = 'opening' THEN 0 ELSE 1 END,
+                    purchased_at, id
+           FOR UPDATE`,
+          [item.product.id],
+        );
+        let neededMilli = requiredMilli;
+        const allocations: StockAllocation[] = [];
+        for (const batch of availableBatches.rows) {
+          if (neededMilli === 0n) break;
+          const batchMilli = quantityToMilli(batch.remaining_quantity);
+          const allocatedMilli = batchMilli < neededMilli ? batchMilli : neededMilli;
+          allocations.push({
+            batchId: batch.id,
+            quantity: milliToQuantity(allocatedMilli),
+          });
+          neededMilli -= allocatedMilli;
+        }
+        if (neededMilli > 0n) {
+          const availableMilli = requiredMilli - neededMilli;
+          throw new HttpError(
+            409,
+            `Insufficient stock for ${item.product.name}. Available: ${milliToQuantity(availableMilli)} ${item.product.unit}; requested: ${item.quantity} ${item.product.unit}.`,
+          );
+        }
+        allocationsByProduct.set(item.product.id, allocations);
+      }
 
       const subtotalCents = snapshots.reduce((sum, item) => sum + item.subtotalCents, 0n);
       const discountCents = priceToCents(request.discountAmount);
@@ -636,7 +735,7 @@ export class PostgresBillingRepository implements BillingRepository {
             item.product.name,
             item.product.sku ?? '',
             item.product.unit,
-            centsToMoney(item.unitPriceCents),
+            item.unitPrice,
             item.quantity,
             centsToMoney(item.subtotalCents),
             settings.gstRate,
@@ -645,6 +744,33 @@ export class PostgresBillingRepository implements BillingRepository {
             centsToMoney(item.tax.sgstCents),
             centsToMoney(item.tax.igstCents),
           ],
+        );
+      }
+
+      for (const item of snapshots) {
+        for (const allocation of allocationsByProduct.get(item.product.id) ?? []) {
+          await client.query(
+            `UPDATE stock_batches
+             SET remaining_quantity = remaining_quantity - $2, updated_at = NOW()
+             WHERE id = $1`,
+            [allocation.batchId, allocation.quantity],
+          );
+          await client.query(
+            `INSERT INTO inventory_movements (
+               product_id, stock_batch_id, change_quantity, reason, invoice_id, created_by
+             ) VALUES ($1, $2, -$3::numeric, 'sale', $4, $5)`,
+            [
+              item.product.id,
+              allocation.batchId,
+              allocation.quantity,
+              invoiceRow.id,
+              createdBy,
+            ],
+          );
+        }
+        await client.query(
+          'UPDATE products SET stock_quantity = stock_quantity - $2, updated_at = NOW() WHERE id = $1',
+          [item.product.id, item.quantity],
         );
       }
 

@@ -53,6 +53,7 @@ class TestReportRepository implements ReportRepository {
       date,
       totalSales: '150.00',
       invoiceCount: 3,
+      stockProductCount: 2,
       paymentSummary: [
         { method: 'cash', invoiceCount: 1, amount: '50.00' },
         { method: 'upi', invoiceCount: 0, amount: '0.00' },
@@ -175,6 +176,7 @@ describe('Phase 7 report and backup APIs', () => {
     equal(reports.dashboardDate, '2026-10-19');
     equal(dashboard.body.dashboard.totalSales, '150.00');
     equal(dashboard.body.dashboard.invoiceCount, 3);
+    equal(dashboard.body.dashboard.stockProductCount, 2);
 
     await request(app)
       .get('/admin/reports/inventory')

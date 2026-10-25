@@ -1,5 +1,3 @@
-import { ProductInput } from './product-types';
-
 export type UserRole = 'admin' | 'cashier';
 
 export interface PublicUser {
@@ -16,11 +14,7 @@ export interface AuthRepository {
   findByUsername(username: string): Promise<StoredUser | null>;
   findById(id: string): Promise<PublicUser | null>;
   hasAdmin?(): Promise<boolean>;
-  createInitialAdmin?(
-    username: string,
-    passwordHash: string,
-    sampleProducts?: ProductInput[],
-  ): Promise<PublicUser>;
+  createInitialAdmin?(username: string, passwordHash: string): Promise<PublicUser>;
   createCashier(
     username: string,
     passwordHash: string,

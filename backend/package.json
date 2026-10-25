@@ -11,6 +11,7 @@
     "db:backup": "tsx src/backup-cli.ts backup",
     "db:restore": "tsx src/backup-cli.ts restore",
     "db:migrate": "tsx src/migrate.ts",
+    "db:seed-demo": "tsx src/demo-stock-data.ts",
     "admin:create": "tsx src/create-admin.ts",
     "test": "tsx --test src/*.test.ts",
     "test:db": "tsx --test src/product-database.test.ts",

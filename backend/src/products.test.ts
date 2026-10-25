@@ -5,6 +5,7 @@ import { equal, ok, throws } from 'node:assert/strict';
 import { createApp } from './app';
 import { PublicUser, StoredUser, UserRole } from './types';
 import { Product, ProductInput, ProductRepository } from './product-types';
+import { StockProduct, StockRepository } from './stock-types';
 import { validateProductInput } from './product-validation';
 
 const testSecret = 'test-only-product-jwt-secret-with-more-than-thirty-two-bytes';
@@ -123,6 +124,81 @@ class FakeProductRepository implements ProductRepository {
   }
 }
 
+class FakeStockRepository implements StockRepository {
+  private product: StockProduct = {
+    productId: '1',
+    name: 'Basmati Rice',
+    sku: 'RICE-001',
+    unit: 'kg',
+    openingQuantity: '0.000',
+    openingRemainingQuantity: '0.000',
+    openingPurchasePrice: '0.00',
+    totalQuantity: '0.000',
+    purchases: [],
+  };
+
+  reset() {
+    this.product = {
+      productId: '1',
+      name: 'Basmati Rice',
+      sku: 'RICE-001',
+      unit: 'kg',
+      openingQuantity: '0.000',
+      openingRemainingQuantity: '0.000',
+      openingPurchasePrice: '0.00',
+      totalQuantity: '0.000',
+      purchases: [],
+    };
+  }
+
+  async list(): Promise<StockProduct[]> {
+    return [this.product];
+  }
+
+  async setOpeningStock(
+    productId: string,
+    quantity: string,
+    purchasePrice: string,
+  ): Promise<StockProduct | null> {
+    if (productId !== this.product.productId) return null;
+    const normalizedQuantity = Number(quantity).toFixed(3);
+    this.product = {
+      ...this.product,
+      openingQuantity: normalizedQuantity,
+      openingRemainingQuantity: normalizedQuantity,
+      openingPurchasePrice: purchasePrice,
+      totalQuantity: normalizedQuantity,
+    };
+    return this.product;
+  }
+
+  async receivePurchase(
+    productId: string,
+    quantity: string,
+    purchasePrice: string,
+    purchaseDate: string,
+  ): Promise<StockProduct | null> {
+    if (productId !== this.product.productId) return null;
+    const nextTotal = (Number(this.product.totalQuantity) + Number(quantity)).toFixed(3);
+    this.product = {
+      ...this.product,
+      totalQuantity: nextTotal,
+      purchases: [
+        ...this.product.purchases,
+        {
+          id: String(this.product.purchases.length + 1),
+          type: 'purchase',
+          quantity: Number(quantity).toFixed(3),
+          remainingQuantity: Number(quantity).toFixed(3),
+          purchasePrice,
+          purchaseDate,
+        },
+      ],
+    };
+    return this.product;
+  }
+}
+
 const validProduct = {
   name: 'Basmati Rice',
   sku: 'RICE-001',
@@ -130,16 +206,19 @@ const validProduct = {
   unit: 'kg',
   purchasePrice: '80.00',
   sellingPrice: '100.00',
+  sellingQuantity: '1.000',
   gstRate: '5.00',
 };
 
 describe('product API', () => {
   const authRepository = new FakeAuthRepository();
   const productRepository = new FakeProductRepository();
+  const stockRepository = new FakeStockRepository();
   const app = createApp({
     jwtSecret: testSecret,
     repository: authRepository,
     productRepository,
+    stockRepository,
   });
   let adminToken = '';
   let cashierToken = '';
@@ -191,6 +270,7 @@ describe('product API', () => {
       .send({ ...validProduct, sku: 'RICE-002' })
       .expect(201);
     equal(created.body.product.unit, 'kg');
+    equal(created.body.product.sellingQuantity, '1.000');
 
     const updated = await request(app)
       .put(`/products/${created.body.product.id}`)
@@ -212,6 +292,88 @@ describe('product API', () => {
       .expect(409);
   });
 
+  it('validates and persists opening stock on product creation', async () => {
+    const created = await request(app)
+      .post('/products')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        ...validProduct,
+        sku: 'RICE-OPENING-1',
+        openingStockQuantity: '12.5',
+      })
+      .expect(201);
+    equal(created.body.product.openingStockQuantity, '12.500');
+    await request(app)
+      .post('/products')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        ...validProduct,
+        sku: 'RICE-OPENING-2',
+        openingStockQuantity: '-1',
+      })
+      .expect(400);
+  });
+
+  it('exposes stock to signed-in users and restricts stock changes to Admins', async () => {
+    stockRepository.reset();
+    await request(app).get('/stocks').expect(401);
+    const listed = await request(app)
+      .get('/stocks')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .expect(403);
+    equal(listed.body.message, 'You are not authorized to access this resource.');
+
+    const adminStockList = await request(app)
+      .get('/stocks')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    equal(adminStockList.body.products[0].openingQuantity, '0.000');
+
+    await request(app)
+      .put('/stocks/1/opening')
+      .set('Authorization', `Bearer ${cashierToken}`)
+      .send({ quantity: '10', purchasePrice: '42.50' })
+      .expect(403);
+
+    await request(app)
+      .put('/stocks/1/opening')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ quantity: '1.0000', purchasePrice: '42.50' })
+      .expect(400);
+
+    const opening = await request(app)
+      .put('/stocks/1/opening')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ quantity: '100', purchasePrice: '42.50' })
+      .expect(200);
+    equal(opening.body.product.openingQuantity, '100.000');
+    equal(opening.body.product.totalQuantity, '100.000');
+
+    const purchase = await request(app)
+      .post('/stocks/1/purchases')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        quantity: '100',
+        purchasePrice: '50.00',
+        purchaseDate: '2025-02-10',
+      })
+      .expect(201);
+    equal(purchase.body.product.openingQuantity, '100.000');
+    equal(purchase.body.product.purchases.length, 1);
+    equal(purchase.body.product.purchases[0].purchaseDate, '2025-02-10');
+    equal(purchase.body.product.totalQuantity, '200.000');
+
+    await request(app)
+      .post('/stocks/1/purchases')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        quantity: '1',
+        purchasePrice: '50.00',
+        purchaseDate: '2025-02-30',
+      })
+      .expect(400);
+  });
+
   it('creates and edits products without stock fields', async () => {
     const created = await request(app)
       .post('/products')
@@ -229,10 +391,12 @@ describe('product API', () => {
         unit: 'litre',
         name: 'Cooking Oil',
         sellingPrice: '120.00',
+        sellingQuantity: '0.500',
       })
       .expect(200);
     equal(updated.body.product.unit, 'litre');
     equal(updated.body.product.sellingPrice, '120.00');
+    equal(updated.body.product.sellingQuantity, '0.500');
     equal(updated.body.product.stockQuantity, undefined);
     equal(updated.body.product.lowStockThreshold, undefined);
   });
@@ -267,6 +431,22 @@ describe('product API', () => {
     }
     for (const gstRate of ['-1', '100.01', 'abc', '1.234']) {
       throws(() => validateProductInput({ ...validProduct, gstRate }));
+    }
+  });
+
+  it('validates the configured selling quantity and defaults legacy requests to one', () => {
+    equal(validateProductInput(validProduct).sellingQuantity, '1.000');
+    equal(
+      validateProductInput({
+        ...validProduct,
+        sellingQuantity: '100',
+      }).sellingQuantity,
+      '100.000',
+    );
+    for (const sellingQuantity of ['0', '-1', '0.0001', '1000000000', 'abc']) {
+      throws(() =>
+        validateProductInput({ ...validProduct, sellingQuantity }),
+      );
     }
   });
 

@@ -64,7 +64,7 @@ abstract interface class AuthGateway
   Future<void> clearToken();
 }
 
-class HttpAuthGateway implements AuthGateway {
+class HttpAuthGateway implements AuthGateway, StockGateway {
   HttpAuthGateway({
     String baseUrl = const String.fromEnvironment(
       'API_BASE_URL',
@@ -96,7 +96,7 @@ class HttpAuthGateway implements AuthGateway {
   final Uri _baseUri;
   final FlutterSecureStorage _secureStorage;
   final http.Client _httpClient;
-  final ProductGateway _products;
+  final HttpProductGateway _products;
   final BillingGateway _billing;
   final ReportsGateway _reports;
 
@@ -265,6 +265,29 @@ class HttpAuthGateway implements AuthGateway {
   Future<void> deleteProduct(String id) {
     return _products.deleteProduct(id);
   }
+
+  @override
+  Future<List<StockProduct>> loadStocks() => _products.loadStocks();
+
+  @override
+  Future<StockProduct> updateOpeningStock(
+    String productId,
+    String quantity,
+    String purchasePrice,
+  ) => _products.updateOpeningStock(productId, quantity, purchasePrice);
+
+  @override
+  Future<StockProduct> receiveStockPurchase(
+    String productId,
+    String quantity,
+    String purchasePrice,
+    String purchaseDate,
+  ) => _products.receiveStockPurchase(
+    productId,
+    quantity,
+    purchasePrice,
+    purchaseDate,
+  );
 
   @override
   Future<GstSettings> getGstSettings() => _billing.getGstSettings();

@@ -93,6 +93,9 @@ class FakeAuthGateway implements AuthGateway {
       unit: draft.unit,
       purchasePrice: draft.purchasePrice,
       sellingPrice: draft.sellingPrice,
+      sellingQuantity: draft.sellingQuantity,
+      openingStockQuantity: draft.openingStockQuantity,
+      stockQuantity: draft.openingStockQuantity,
       gstRate: draft.gstRate,
     );
     productItems.add(product);
@@ -109,6 +112,8 @@ class FakeAuthGateway implements AuthGateway {
       unit: draft.unit,
       purchasePrice: draft.purchasePrice,
       sellingPrice: draft.sellingPrice,
+      sellingQuantity: draft.sellingQuantity,
+      openingStockQuantity: draft.openingStockQuantity,
       gstRate: draft.gstRate,
     );
     productItems.removeWhere((item) => item.id == id);
@@ -181,6 +186,9 @@ class FakeAuthGateway implements AuthGateway {
       );
     }
     final cents = items.fold<int>(0, (sum, item) {
+      final product = productItems.firstWhere(
+        (product) => product.id == item.productId,
+      );
       final priceParts = item.unitPrice.split('.');
       final priceCents =
           int.parse(priceParts[0]) * 100 +
@@ -195,7 +203,17 @@ class FakeAuthGateway implements AuthGateway {
                 ? quantityParts[1].padRight(3, '0')
                 : '000',
           );
-      return sum + (priceCents * quantityMilli + 500) ~/ 1000;
+      final configuredParts = product.sellingQuantity.split('.');
+      final configuredQuantityMilli =
+          int.parse(configuredParts[0]) * 1000 +
+          int.parse(
+            configuredParts.length > 1
+                ? configuredParts[1].padRight(3, '0')
+                : '000',
+          );
+      return sum +
+          (priceCents * quantityMilli + configuredQuantityMilli ~/ 2) ~/
+              configuredQuantityMilli;
     });
     final discountParts = discountAmount.split('.');
     final discountCents =
@@ -281,6 +299,7 @@ class FakeAuthGateway implements AuthGateway {
           date: date.toIso8601String().substring(0, 10),
           totalSales: '0.00',
           invoiceCount: savedInvoices.length,
+          stockProductCount: 0,
           paymentSummary: const [],
         );
   }
@@ -772,21 +791,25 @@ void main() {
       find.byKey(const Key('productNameField')),
       'Basmati Rice',
     );
+    expect(find.byKey(const Key('productSkuField')), findsNothing);
+    expect(find.byKey(const Key('productCategoryField')), findsNothing);
+    expect(find.byKey(const Key('productPurchasePriceField')), findsOneWidget);
+    expect(find.text('Price per kg / litre (₹)'), findsNothing);
     await tester.enterText(
-      find.byKey(const Key('productSkuField')),
-      'RICE-001',
-    );
-    await tester.enterText(
-      find.byKey(const Key('productCategoryField')),
-      'Rice',
+      find.byKey(const Key('productQuantityField')),
+      '100',
     );
     await tester.enterText(
       find.byKey(const Key('productPurchasePriceField')),
-      '80.00',
+      '50.00',
+    );
+    await tester.enterText(
+      find.byKey(const Key('productOpeningStockQuantityField')),
+      '1000',
     );
     await tester.enterText(
       find.byKey(const Key('productSellingPriceField')),
-      '100.00',
+      '8.00',
     );
     expect(find.byKey(const Key('productStockField')), findsNothing);
     expect(find.byKey(const Key('productThresholdField')), findsNothing);
@@ -795,18 +818,19 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Basmati Rice'), findsOneWidget);
-    expect(find.textContaining('RICE-001'), findsOneWidget);
-    expect(find.text('Buy ₹80.00'), findsOneWidget);
+    expect(find.text('Sell ₹8.00 / 100 g'), findsOneWidget);
+    expect(find.text('Buy ₹50.00'), findsOneWidget);
+    expect(gateway.productItems.single.openingStockQuantity, '1000');
 
     await tester.tap(find.byKey(const Key('editProduct-10')));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byKey(const Key('productSellingPriceField')),
-      '105.00',
+      '10.00',
     );
     await tester.tap(find.byKey(const Key('saveProductButton')));
     await tester.pumpAndSettle();
-    expect(find.text('Sell ₹105.00'), findsOneWidget);
+    expect(find.text('Sell ₹10.00 / 100 g'), findsOneWidget);
 
     await tester.pageBack();
     await tester.pumpAndSettle();
@@ -975,7 +999,7 @@ void main() {
     await tester.enterText(find.byKey(const Key('newQuantityInput-31')), '0.1');
     await tester.tap(find.byKey(const Key('confirmProductQuantity-31')));
     await tester.pumpAndSettle();
-    expect(find.text('₹2.50'), findsOneWidget);
+    expect(find.text('₹2.50 / 1 kg'), findsOneWidget);
     expect(find.byKey(const Key('quantityInput-31-kg')), findsOneWidget);
     expect(
       tester.widget<Text>(find.byKey(const Key('summary-subtotal'))).data,
@@ -1214,6 +1238,109 @@ void main() {
     await tester.tap(find.byKey(const Key('saveInvoiceButton')));
     await tester.pumpAndSettle();
     expect(gateway.lastInvoiceItems.single.quantity, '1.300');
+  });
+
+  testWidgets('configured selling quantity prices proportional weight sales', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final gateway = FakeAuthGateway(
+      initialUser: const AuthUser(
+        id: '2',
+        username: 'till',
+        role: UserRole.cashier,
+      ),
+    );
+    gateway.productItems.add(
+      const ProductItem(
+        id: '42',
+        name: 'Rice',
+        sku: '',
+        category: 'General',
+        unit: 'g',
+        sellingPrice: '8.00',
+        sellingQuantity: '100.000',
+        gstRate: '0.00',
+      ),
+    );
+    await tester.pumpWidget(MalligaiKadaiApp(authGateway: gateway));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('openBillingButton')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('addToCart-42')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('newQuantityInput-42')), '250');
+    await tester.tap(find.byKey(const Key('confirmProductQuantity-42')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<Text>(find.byKey(const Key('lineTotal-42'))).data,
+      '₹20.00',
+    );
+    await tester.tap(find.byKey(const Key('saveInvoiceButton')));
+    await tester.pumpAndSettle();
+    expect(gateway.lastInvoiceItems.single.quantity, '250.000');
+  });
+
+  testWidgets('configured volume prices convert ml sales to litres', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final gateway = FakeAuthGateway(
+      initialUser: const AuthUser(
+        id: '2',
+        username: 'till',
+        role: UserRole.cashier,
+      ),
+    );
+    gateway.productItems.add(
+      const ProductItem(
+        id: '43',
+        name: 'Oil',
+        sku: '',
+        category: 'General',
+        unit: 'ml',
+        sellingPrice: '60.00',
+        sellingQuantity: '500.000',
+        gstRate: '0.00',
+      ),
+    );
+    await tester.pumpWidget(MalligaiKadaiApp(authGateway: gateway));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('openBillingButton')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('addToCart-43')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('newQuantityInput-43')))
+          .controller!
+          .text,
+      '100',
+    );
+    await tester.tap(find.byKey(const Key('newQuantityUnit-43')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('litre').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('newQuantityInput-43')), '1');
+    await tester.tap(find.byKey(const Key('confirmProductQuantity-43')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<Text>(find.byKey(const Key('lineTotal-43'))).data,
+      '₹120.00',
+    );
+    await tester.tap(find.byKey(const Key('saveInvoiceButton')));
+    await tester.pumpAndSettle();
+    expect(gateway.lastInvoiceItems.single.quantity, '1000.000');
   });
 
   testWidgets(
@@ -1481,6 +1608,7 @@ void main() {
             date: '2026-05-12',
             totalSales: '1350.50',
             invoiceCount: 7,
+            stockProductCount: 23,
             paymentSummary: [
               PaymentSummary(method: 'Cash', invoiceCount: 4, amount: '850.50'),
             ],
@@ -1491,6 +1619,8 @@ void main() {
 
     expect(find.text('₹ 1350.50'), findsOneWidget);
     expect(find.text('7'), findsOneWidget);
+    expect(find.text('23'), findsOneWidget);
+    expect(find.text('Stocks'), findsOneWidget);
     expect(find.text('₹ 850.50'), findsOneWidget);
     expect(find.byKey(const Key('openReportsButton')), findsOneWidget);
     expect(find.byKey(const Key('changePasswordButton')), findsOneWidget);

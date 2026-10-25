@@ -9,8 +9,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
-import '../products/product_gateway.dart';
-
 String _joinLocalPath(String first, String second) =>
     '$first${Platform.pathSeparator}$second';
 
@@ -1313,11 +1311,7 @@ class InitialAdminSetupApi {
     return body['setupRequired'] as bool;
   }
 
-  Future<void> createInitialAdmin(
-    String username,
-    String password,
-    List<ProductDraft> sampleProducts,
-  ) async {
+  Future<void> createInitialAdmin(String username, String password) async {
     late final http.Response response;
     try {
       response = await _send(
@@ -1327,13 +1321,7 @@ class InitialAdminSetupApi {
             'Content-Type': 'application/json',
             'X-Initial-Setup-Token': setupToken,
           },
-          body: jsonEncode({
-            'username': username.trim(),
-            'password': password,
-            'sampleProducts': sampleProducts
-                .map((product) => product.toJson())
-                .toList(growable: false),
-          }),
+          body: jsonEncode({'username': username.trim(), 'password': password}),
         ),
       );
     } finally {

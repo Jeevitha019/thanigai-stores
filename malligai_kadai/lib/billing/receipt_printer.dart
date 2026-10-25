@@ -214,6 +214,21 @@ class WindowsReceiptPrinterGateway implements ReceiptPrinterGateway {
     bool a4Invoice = false,
   }) async {
     if (a4Invoice) return _buildA4Pdf(invoice, testMode: testMode);
+    final receipt = await _buildReceiptPdf(
+      invoice,
+      paperWidthMm: paperWidthMm,
+      printableWidthMm: printableWidthMm,
+      testMode: testMode,
+    );
+    return receipt.bytes;
+  }
+
+  Future<({Uint8List bytes, PdfPageFormat format})> _buildReceiptPdf(
+    SavedInvoice invoice, {
+    required int paperWidthMm,
+    double? printableWidthMm,
+    required bool testMode,
+  }) async {
     final contentWidthMm =
         printableWidthMm ??
         math.min(
@@ -280,7 +295,7 @@ class WindowsReceiptPrinterGateway implements ReceiptPrinterGateway {
         ui.ParagraphConstraints(width: format.availableWidth * renderScale),
       );
     final logoData = await rootBundle.load(
-      'assets/thanigai_stores_receipt_logo.png',
+      'assets/thanigai_stores_receipt_logo_transparent.png',
     );
     final logoCodec = await ui.instantiateImageCodec(
       logoData.buffer.asUint8List(),
@@ -291,7 +306,7 @@ class WindowsReceiptPrinterGateway implements ReceiptPrinterGateway {
       (paperWidthMm - 12) * PdfPageFormat.mm * renderScale,
       paperWidthMm * 0.4 * PdfPageFormat.mm * renderScale,
     );
-    const logoMaxHeight = 28 * PdfPageFormat.mm * renderScale;
+    const logoMaxHeight = 24 * PdfPageFormat.mm * renderScale;
     const logoGap = 1 * PdfPageFormat.mm * renderScale;
     const titleGap = 2 * PdfPageFormat.mm * renderScale;
     final titleTop = logoMaxHeight + logoGap;
@@ -347,7 +362,7 @@ class WindowsReceiptPrinterGateway implements ReceiptPrinterGateway {
         ),
       ),
     );
-    return document.save();
+    return (bytes: await document.save(), format: pageFormat);
   }
 
   Future<Uint8List> _buildA4Pdf(
@@ -565,27 +580,20 @@ class WindowsReceiptPrinterGateway implements ReceiptPrinterGateway {
     final printableWidthMm =
         settings?.targetPrintableWidthMm ??
         ReceiptPrinterSettings.defaultPrintableWidthMm;
-    final format = PdfPageFormat(
-      paperWidthMm * PdfPageFormat.mm,
-      1000 * PdfPageFormat.mm,
-      marginAll: 0,
-    );
     try {
+      final receipt = await _buildReceiptPdf(
+        invoice,
+        paperWidthMm: paperWidthMm,
+        printableWidthMm: printableWidthMm,
+        testMode: testMode,
+      );
       final completed = await Printing.directPrintPdf(
         printer: selected,
         name: testMode ? 'Thanigai Stores Printer Test' : invoice.invoiceNumber,
-        format: format,
-        dynamicLayout: true,
-        usePrinterSettings: true,
-        onLayout: (_) {
-          return buildPdf(
-            invoice,
-            paperWidthMm: paperWidthMm,
-            printableWidthMm: printableWidthMm,
-            testMode: testMode,
-            a4Invoice: false,
-          );
-        },
+        format: receipt.format,
+        dynamicLayout: false,
+        usePrinterSettings: false,
+        onLayout: (_) async => receipt.bytes,
       );
       return completed;
     } on PlatformException catch (error) {

@@ -9,7 +9,10 @@ import { BillingRepository, CreateInvoiceRequest, Invoice } from './billing-type
 import {
   calculateItemTax,
   centsToMoney,
+  configuredLineTotalCents,
   lineTotalCents,
+  microsToUnitPrice,
+  unitPriceMicros,
   validateGstSettings,
   validateInvoiceRequest,
 } from './billing-validation';
@@ -480,6 +483,25 @@ describe('decimal-safe billing calculations', () => {
     equal(centsToMoney(first), '0.03');
     equal(centsToMoney(second), '2.64');
     equal(centsToMoney(first + second), '2.67');
+  });
+
+  it('prices proportional sales against the configured product quantity', () => {
+    equal(
+      centsToMoney(configuredLineTotalCents('8.00', '250.000', '100.000')),
+      '20.00',
+    );
+    equal(
+      centsToMoney(configuredLineTotalCents('60.00', '250.000', '500.000')),
+      '30.00',
+    );
+    equal(
+      microsToUnitPrice(unitPriceMicros('60.00', '500.000')),
+      '0.120000',
+    );
+    equal(
+      centsToMoney(configuredLineTotalCents('10.00', '1.000', '3.000')),
+      '3.33',
+    );
   });
 
   it('calculates exclusive/inclusive tax and splits intra/interstate GST exactly', () => {

@@ -64,6 +64,20 @@ export function validateProductInput(body: Record<string, unknown>): ProductInpu
   }
 
   const gstRate = decimal(body.gstRate, 'GST rate', 2, 0, 100);
+  const sellingQuantity = decimal(
+    body.sellingQuantity ?? '1',
+    'Quantity',
+    3,
+    0.001,
+    999999999.999,
+  );
+  const openingStockQuantity = decimal(
+    body.openingStockQuantity ?? '0',
+    'Opening stock quantity',
+    3,
+    0,
+    999999999.999,
+  );
 
   const sku =
     typeof body.sku === 'string' && body.sku.trim()
@@ -77,6 +91,8 @@ export function validateProductInput(body: Record<string, unknown>): ProductInpu
     unit: unit as ProductUnit,
     purchasePrice: decimal(body.purchasePrice, 'Purchase price', 2, 0, 9999999999.99),
     sellingPrice: decimal(body.sellingPrice, 'Selling price', 2, 0.01, 9999999999.99),
+    sellingQuantity,
+    openingStockQuantity,
     gstRate,
   };
 }

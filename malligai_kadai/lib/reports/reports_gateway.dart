@@ -45,12 +45,14 @@ class DashboardData {
     required this.date,
     required this.totalSales,
     required this.invoiceCount,
+    required this.stockProductCount,
     required this.paymentSummary,
   });
 
   final String date;
   final String totalSales;
   final int invoiceCount;
+  final int stockProductCount;
   final List<PaymentSummary> paymentSummary;
 
   factory DashboardData.fromJson(Object? value) {
@@ -58,6 +60,7 @@ class DashboardData {
         value['date'] is! String ||
         value['totalSales'] == null ||
         value['invoiceCount'] is! num ||
+        value['stockProductCount'] is! num ||
         value['paymentSummary'] is! List) {
       throw const ReportsFailure('The API returned invalid dashboard totals.');
     }
@@ -65,6 +68,7 @@ class DashboardData {
       date: value['date'] as String,
       totalSales: value['totalSales'].toString(),
       invoiceCount: (value['invoiceCount'] as num).toInt(),
+      stockProductCount: (value['stockProductCount'] as num).toInt(),
       paymentSummary: (value['paymentSummary'] as List)
           .map(PaymentSummary.fromJson)
           .toList(growable: false),

@@ -25,6 +25,7 @@ const input: ProductInput = {
   unit: 'piece',
   purchasePrice: '1.25',
   sellingPrice: '2.50',
+  sellingQuantity: '1.000',
   gstRate: '5.00',
 };
 
@@ -33,6 +34,8 @@ before(async () => {
     for (const file of [
       '006_reports_inventory_audit.sql',
       '007_optional_product_codes_stock_settings.sql',
+      '013_product_selling_quantities.sql',
+      '014_stock_batches.sql',
     ]) {
       const migration = await readFile(
         path.resolve(__dirname, `../migrations/${file}`),
@@ -84,6 +87,7 @@ it(
     createdId = created.id;
     equal(created.sku, sku);
     equal(created.purchasePrice, '1.25');
+    equal(created.sellingQuantity, '1.000');
     ok(created.createdAt);
 
     const found = await postgresProductRepository.findById(created.id);

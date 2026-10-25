@@ -25,6 +25,7 @@ class FakeReportsGateway implements ReportsGateway {
     date: '2026-10-19',
     totalSales: '125.50',
     invoiceCount: 4,
+    stockProductCount: 2,
     paymentSummary: const [
       PaymentSummary(method: 'cash', invoiceCount: 1, amount: '25.50'),
       PaymentSummary(method: 'upi', invoiceCount: 1, amount: '30.00'),

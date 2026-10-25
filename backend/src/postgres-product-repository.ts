@@ -1,4 +1,5 @@
 import { PoolClient } from 'pg';
+import { HttpError } from './auth';
 import { insertAuditEvent } from './audit';
 import { getDatabasePool } from './database';
 import { Product, ProductInput, ProductRepository, ProductUnit } from './product-types';
@@ -11,6 +12,9 @@ interface ProductRow {
   unit: ProductUnit;
   purchase_price: string;
   selling_price: string;
+  selling_quantity: string;
+  opening_stock_quantity: string;
+  stock_quantity: string;
   gst_rate: string;
   created_at: Date;
   updated_at: Date;
@@ -18,7 +22,8 @@ interface ProductRow {
 
 const columns = `
   id, name, sku, category, unit,
-  purchase_price, selling_price, gst_rate, created_at, updated_at
+  purchase_price, selling_price, selling_quantity, opening_stock_quantity,
+  stock_quantity, gst_rate, created_at, updated_at
 `;
 
 function toProduct(row: ProductRow): Product {
@@ -30,6 +35,9 @@ function toProduct(row: ProductRow): Product {
     unit: row.unit,
     purchasePrice: row.purchase_price,
     sellingPrice: row.selling_price,
+    sellingQuantity: row.selling_quantity,
+    openingStockQuantity: row.opening_stock_quantity,
+    stockQuantity: row.stock_quantity,
     gstRate: row.gst_rate,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -63,10 +71,11 @@ export const postgresProductRepository: ProductRepository = {
     return inTransaction(async (client) => {
       const result = await client.query<ProductRow>(
         `INSERT INTO products (
-           name, sku, category, unit, purchase_price, selling_price,
+           name, sku, category, unit, purchase_price, selling_price, selling_quantity,
+           opening_stock_quantity,
            stock_quantity, low_stock_threshold, gst_rate
          )
-         VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, 0, $9)
          RETURNING ${columns}`,
         [
           input.name,
@@ -75,11 +84,38 @@ export const postgresProductRepository: ProductRepository = {
           input.unit,
           input.purchasePrice,
           input.sellingPrice,
+          input.sellingQuantity,
+          input.openingStockQuantity ?? '0.000',
           input.gstRate,
         ],
       );
       const row = result.rows[0];
       if (!row) throw new Error('Product could not be created.');
+      const openingQuantity = input.openingStockQuantity ?? '0.000';
+      if (Number(openingQuantity) > 0) {
+        const batch = await client.query<{ id: string }>(
+          `INSERT INTO stock_batches (
+             product_id, batch_type, received_quantity, remaining_quantity,
+             purchase_price, purchased_at, created_by
+           ) VALUES ($1, 'opening', $2, $2, $3, $4, $5)
+           RETURNING id`,
+          [
+            row.id,
+            openingQuantity,
+            input.purchasePrice,
+            row.created_at,
+            actorId ?? null,
+          ],
+        );
+        const batchId = batch.rows[0]?.id;
+        if (!batchId) throw new Error('Opening stock batch could not be saved.');
+        await client.query(
+          `INSERT INTO inventory_movements (
+             product_id, stock_batch_id, change_quantity, reason, created_by
+           ) VALUES ($1, $2, $3, 'opening_balance', $4)`,
+          [row.id, batchId, openingQuantity, actorId ?? null],
+        );
+      }
       await insertAuditEvent(client, {
         actorId: actorId ?? null,
         action: 'product.created',
@@ -93,6 +129,28 @@ export const postgresProductRepository: ProductRepository = {
 
   async update(id, input, actorId) {
     return inTransaction(async (client) => {
+      const existing = await client.query<{
+        unit: ProductUnit;
+        stock_quantity: string;
+      }>(
+        `SELECT unit, stock_quantity::text
+         FROM products WHERE id = $1 AND is_active = TRUE FOR UPDATE`,
+        [id],
+      );
+      const current = existing.rows[0];
+      if (!current) return null;
+      if (current.unit !== input.unit) {
+        const batches = await client.query(
+          'SELECT 1 FROM stock_batches WHERE product_id = $1 LIMIT 1',
+          [id],
+        );
+        if (Number(current.stock_quantity) > 0 || batches.rowCount) {
+          throw new HttpError(
+            409,
+            'The stock unit cannot be changed after stock has been recorded.',
+          );
+        }
+      }
       const result = await client.query<ProductRow>(
         `UPDATE products SET
            name = $2,
@@ -101,7 +159,8 @@ export const postgresProductRepository: ProductRepository = {
            unit = $5,
            purchase_price = $6,
            selling_price = $7,
-           gst_rate = $8,
+           selling_quantity = $8,
+           gst_rate = $9,
            updated_at = NOW()
          WHERE id = $1 AND is_active = TRUE
          RETURNING ${columns}`,
@@ -113,6 +172,7 @@ export const postgresProductRepository: ProductRepository = {
           input.unit,
           input.purchasePrice,
           input.sellingPrice,
+          input.sellingQuantity,
           input.gstRate,
         ],
       );

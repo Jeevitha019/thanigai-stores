@@ -8,6 +8,7 @@ import { Pool } from 'pg';
 import { CreateInvoiceRequest } from './billing-types';
 import { getDatabasePool } from './database';
 import { PostgresBillingRepository } from './postgres-billing-repository';
+import { createPostgresStockRepository } from './postgres-stock-repository';
 import { centsToMoney, lineTotalCents } from './billing-validation';
 
 const isConfigured = Boolean(
@@ -20,7 +21,9 @@ const schema = `billing_test_${randomUUID().replace(/-/g, '')}`;
 let testPool: Pool | undefined;
 let repository: PostgresBillingRepository | undefined;
 let productId = '';
+let configuredProductId = '';
 let optionalCodeProductId = '';
+let fifoProductId = '';
 let testSchemaCreated = false;
 
 before(async () => {
@@ -63,6 +66,8 @@ before(async () => {
     '010_custom_product_gst_rates.sql',
     '011_shop_gst_rate.sql',
     '012_void_invoices.sql',
+    '013_product_selling_quantities.sql',
+    '014_stock_batches.sql',
   ]) {
     const sql = await readFile(
       path.resolve(__dirname, '../migrations', migration),
@@ -78,10 +83,18 @@ before(async () => {
     `INSERT INTO products (
        name, sku, category, unit, purchase_price, selling_price,
        stock_quantity, low_stock_threshold, gst_rate
-     ) VALUES ('TEST ONLY - Snapshot Apples', 'BILLING-TEST-1', 'Fruit', 'kg', 1.00, 2.50, 5.000, 1.000, 0)
+     ) VALUES ('TEST ONLY - Snapshot Apples', 'BILLING-TEST-1', 'Fruit', 'kg', 1.00, 2.50, 100.000, 1.000, 0)
      RETURNING id`,
   );
   productId = product.rows[0].id;
+  const configuredProduct = await testPool.query<{ id: string }>(
+    `INSERT INTO products (
+       name, sku, category, unit, purchase_price, selling_price,
+       selling_quantity, stock_quantity, low_stock_threshold, gst_rate
+     ) VALUES ('TEST ONLY - Rice 100g', 'BILLING-TEST-RICE', 'Test', 'g', 1.00, 8.00, 100.000, 1000.000, 0.000, 0)
+     RETURNING id`,
+  );
+  configuredProductId = configuredProduct.rows[0].id;
   await testPool.query(
     `INSERT INTO products (
        name, sku, category, unit, purchase_price, selling_price,
@@ -92,10 +105,34 @@ before(async () => {
     `INSERT INTO products (
        name, sku, category, unit, purchase_price, selling_price,
        stock_quantity, low_stock_threshold, gst_rate
-     ) VALUES ('TEST ONLY - No Code', NULL, 'Test', 'piece', 1.00, 2.50, 1.000, 0.000, 0)
+     ) VALUES ('TEST ONLY - No Code', NULL, 'Test', 'piece', 1.00, 2.50, 10.000, 0.000, 0)
      RETURNING id`,
   );
   optionalCodeProductId = optionalCodeProduct.rows[0].id;
+  const fifoProduct = await testPool.query<{ id: string }>(
+    `INSERT INTO products (
+       name, sku, category, unit, purchase_price, selling_price,
+       selling_quantity, opening_stock_quantity, stock_quantity,
+       low_stock_threshold, gst_rate
+     ) VALUES ('TEST ONLY - FIFO Oil', 'BILLING-TEST-FIFO', 'Test',
+               'litre', 45.00, 120.00, 1.000, 0.000, 0.000, 0.000, 0)
+     RETURNING id`,
+  );
+  fifoProductId = fifoProduct.rows[0].id;
+  await testPool.query(
+    `INSERT INTO stock_batches (
+       product_id, batch_type, received_quantity, remaining_quantity,
+       purchase_price, purchased_at
+     )
+     SELECT id, 'opening', stock_quantity, stock_quantity,
+            purchase_price, created_at
+     FROM products
+     WHERE name LIKE 'TEST ONLY - %'
+       AND NOT EXISTS (
+         SELECT 1 FROM stock_batches batch
+         WHERE batch.product_id = products.id
+       )`,
+  );
 });
 
 after(async () => {
@@ -126,7 +163,7 @@ function invoiceRequest(
 }
 
 it(
-  'uses transactions, preserves snapshots, leaves stock untouched, and numbers concurrent invoices sequentially',
+  'uses transactions, preserves snapshots, deducts stock, and numbers concurrent invoices sequentially',
   { skip: !isConfigured },
   async () => {
     ok(repository);
@@ -147,7 +184,7 @@ it(
     );
     ok(/^INV-\d{4}-00000001$/.test(first.invoice.invoiceNumber));
     equal(first.invoice.items[0].productName, 'TEST ONLY - Snapshot Apples');
-    equal(first.invoice.items[0].unitPrice, '2.50');
+    equal(first.invoice.items[0].unitPrice, '2.500000');
     equal(first.invoice.items[0].quantity, '1.125');
     equal(first.invoice.items[0].lineTotal, '2.81');
     equal(first.invoice.cashierName, 'test-cashier');
@@ -166,7 +203,13 @@ it(
        WHERE invoice_id = $1`,
       [first.invoice.id],
     );
-    deepStrictEqual(recordedSale.rows, []);
+    deepStrictEqual(recordedSale.rows, [
+      {
+        change_quantity: '-1.125',
+        reason: 'sale',
+        invoice_id: first.invoice.id,
+      },
+    ]);
     const invoiceAudit = await testPool!.query<{ action: string }>(
       `SELECT action FROM audit_logs
        WHERE entity_type = 'invoice' AND entity_id = $1`,
@@ -191,7 +234,7 @@ it(
       'SELECT stock_quantity FROM products WHERE id = $1',
       [productId],
     );
-    equal(persistedStock.rows[0].stock_quantity, '5.000');
+    equal(persistedStock.rows[0].stock_quantity, '98.875');
     const beforeReprint = await testPool!.query(
       `SELECT
          (SELECT COUNT(*) FROM invoices) AS invoice_count,
@@ -222,7 +265,7 @@ it(
     equal(replay.replayed, true);
     equal(replay.invoice.invoiceNumber, first.invoice.invoiceNumber);
     equal(replay.invoice.items[0].productName, 'TEST ONLY - Snapshot Apples');
-    equal(replay.invoice.items[0].unitPrice, '2.50');
+    equal(replay.invoice.items[0].unitPrice, '2.500000');
     await rejects(
       repository.createInvoice('1', invoiceRequest(firstKey, '1.000')),
     );
@@ -254,11 +297,39 @@ it(
       [2, 3],
     );
 
+    it(
+      'calculates proportional sale totals from the configured product quantity',
+      { skip: !isConfigured },
+      async () => {
+        ok(repository);
+        const request: CreateInvoiceRequest = {
+          idempotencyKey: randomUUID(),
+          items: [
+            {
+              productId: configuredProductId,
+              quantity: '250.000',
+              unitPrice: '8.00',
+            },
+          ],
+          saleStateCode: '00',
+          discountAmount: '0.00',
+          gstAmount: '0.00',
+          payments: [{ method: 'cash', amount: '20.00' }],
+        };
+        const { invoice } = await repository.createInvoice('1', request);
+        equal(invoice.subtotal, '20.00');
+        equal(invoice.items[0].quantity, '250.000');
+        equal(invoice.items[0].unit, 'g');
+        equal(invoice.items[0].unitPrice, '0.080000');
+        equal(invoice.items[0].lineTotal, '20.00');
+      },
+    );
+
     const stock = await testPool!.query<{ stock_quantity: string }>(
       'SELECT stock_quantity FROM products WHERE id = $1',
       [productId],
     );
-    equal(stock.rows[0].stock_quantity, '5.000');
+    equal(stock.rows[0].stock_quantity, '96.875');
 
     const piece = await testPool!.query<{ id: string }>(
       "SELECT id FROM products WHERE sku = 'BILLING-TEST-PIECE'",
@@ -305,7 +376,7 @@ it(
       'SELECT stock_quantity FROM products WHERE id = $1',
       [productId],
     );
-    equal(rolledBackStock.rows[0].stock_quantity, '5.000');
+    equal(rolledBackStock.rows[0].stock_quantity, '96.875');
     await testPool!.query('DROP TRIGGER reject_test_invoice_item ON invoice_items');
     await testPool!.query('DROP FUNCTION reject_test_invoice_item()');
   },
@@ -392,7 +463,7 @@ it(
     const count = await testPool!.query<{ count: string }>(
       'SELECT COUNT(*) AS count FROM invoices',
     );
-    equal(count.rows[0].count, '6');
+    equal(count.rows[0].count, '7');
   },
 );
 
@@ -472,7 +543,95 @@ it(
 );
 
 it(
-  'allows quantities above legacy stock and preserves stock and movement history',
+  'keeps opening stock separate, receives dated batches, deducts FIFO stock, and restores voided sales',
+  { skip: !isConfigured },
+  async () => {
+    ok(repository);
+    const stockRepository = createPostgresStockRepository(() => testPool!);
+    const opening = await stockRepository.setOpeningStock(
+      fifoProductId,
+      '100.000',
+      '45.00',
+      '1',
+    );
+    ok(opening);
+    equal(opening.openingQuantity, '100.000');
+    equal(opening.openingRemainingQuantity, '100.000');
+    equal(opening.totalQuantity, '100.000');
+
+    const received = await stockRepository.receivePurchase(
+      fifoProductId,
+      '100.000',
+      '50.00',
+      '2024-01-15',
+      '1',
+    );
+    ok(received);
+    equal(received.openingQuantity, '100.000');
+    equal(received.purchases.length, 1);
+    equal(received.purchases[0].quantity, '100.000');
+    equal(received.purchases[0].remainingQuantity, '100.000');
+    equal(received.totalQuantity, '200.000');
+
+    const sale = await repository.createInvoice('1', {
+      idempotencyKey: randomUUID(),
+      saleStateCode: '33',
+      discountAmount: '0.00',
+      gstAmount: '0.00',
+      items: [{ productId: fifoProductId, quantity: '150.000' }],
+      payments: [{ method: 'cash', amount: '18000.00' }],
+    });
+    const afterSale = await stockRepository.list();
+    const oil = afterSale.find((product) => product.productId === fifoProductId);
+    ok(oil);
+    equal(oil.openingRemainingQuantity, '0.000');
+    equal(oil.purchases[0].remainingQuantity, '50.000');
+    equal(oil.totalQuantity, '50.000');
+    const saleMovements = await testPool!.query<{
+      quantity: string;
+      batch_type: string;
+    }>(
+      `SELECT movement.change_quantity::text AS quantity, batch.batch_type
+       FROM inventory_movements movement
+       JOIN stock_batches batch ON batch.id = movement.stock_batch_id
+       WHERE movement.invoice_id = $1
+       ORDER BY batch.batch_type`,
+      [sale.invoice.id],
+    );
+    deepStrictEqual(saleMovements.rows, [
+      { quantity: '-100.000', batch_type: 'opening' },
+      { quantity: '-50.000', batch_type: 'purchase' },
+    ]);
+
+    await rejects(
+      repository.createInvoice('1', {
+        idempotencyKey: randomUUID(),
+        saleStateCode: '33',
+        discountAmount: '0.00',
+        gstAmount: '0.00',
+        items: [{ productId: fifoProductId, quantity: '51.000' }],
+        payments: [{ method: 'cash', amount: '6120.00' }],
+      }),
+    );
+    equal(
+      (await stockRepository.list()).find(
+        (product) => product.productId === fifoProductId,
+      )?.totalQuantity,
+      '50.000',
+    );
+    equal(await repository.voidInvoice(sale.invoice.id, '1'), true);
+    const afterVoid = (await stockRepository.list()).find(
+      (product) => product.productId === fifoProductId,
+    );
+    ok(afterVoid);
+    equal(afterVoid.openingRemainingQuantity, '100.000');
+    equal(afterVoid.purchases[0].remainingQuantity, '100.000');
+    equal(afterVoid.totalQuantity, '200.000');
+  },
+);
+
+it(
+  'rejects sales beyond available stock without changing inventory',
   { skip: !isConfigured },
   async () => {
     ok(repository);
@@ -488,27 +647,16 @@ it(
       payments: [{ method: 'cash', amount: '248.75' }],
     };
     const idempotencyKey = randomUUID();
-    const sale = await repository.createInvoice('1', {
+    await rejects(repository.createInvoice('1', {
       ...overstockRequest,
       idempotencyKey,
-    });
-    equal(sale.invoice.items[0].quantity, '99.500');
-    const replay = await repository.createInvoice('1', {
-      ...overstockRequest,
-      idempotencyKey,
-    });
-    equal(replay.replayed, true);
+    }));
 
     const stock = await testPool!.query<{ stock_quantity: string }>(
       'SELECT stock_quantity FROM products WHERE id = $1',
       [productId],
     );
-    equal(stock.rows[0].stock_quantity, '5.000');
-    const movements = await testPool!.query<{ count: string }>(
-      'SELECT COUNT(*)::text AS count FROM inventory_movements WHERE invoice_id = $1',
-      [sale.invoice.id],
-    );
-    equal(movements.rows[0].count, '0');
+    equal(stock.rows[0].stock_quantity, '94.875');
   },
 );
 
@@ -557,7 +705,7 @@ it(
        WHERE product.id = $1 AND item.invoice_id = $2`,
       [optionalCodeProductId, sale.invoice.id],
     );
-    equal(persisted.rows[0].stock_quantity, '1.000');
+    equal(persisted.rows[0].stock_quantity, '8.000');
     equal(persisted.rows[0].sku_snapshot, '');
   },
 );
@@ -609,8 +757,18 @@ it(
          name, sku, category, unit, purchase_price, selling_price,
          stock_quantity, low_stock_threshold, gst_rate
        ) VALUES ('TEST ONLY - Fractional packet', 'BILLING-TEST-PACKET',
-                 'Test', 'packet', 1.00, 2.50, 0.000, 0.000, 0)
+                 'Test', 'packet', 1.00, 2.50, 5.000, 0.000, 0)
        RETURNING id`,
+    );
+    await testPool!.query(
+      `INSERT INTO stock_batches (
+         product_id, batch_type, received_quantity, remaining_quantity,
+         purchase_price, purchased_at
+       )
+       SELECT id, 'opening', stock_quantity, stock_quantity,
+              purchase_price, created_at
+       FROM products WHERE id = $1`,
+      [packet.rows[0].id],
     );
     const sale = await repository.createInvoice('1', {
       idempotencyKey: randomUUID(),

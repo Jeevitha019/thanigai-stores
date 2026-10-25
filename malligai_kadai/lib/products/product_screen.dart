@@ -105,10 +105,8 @@ class _ProductScreenState extends State<ProductScreen> {
       final savePath = target.path.toLowerCase().endsWith('.xlsx')
           ? target.path
           : '${target.path}.xlsx';
-      await File(savePath).writeAsBytes(
-        encodeProductsXlsx(products),
-        flush: true,
-      );
+      await File(savePath)
+          .writeAsBytes(encodeProductsXlsx(products), flush: true);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Product details saved to $savePath')),
@@ -184,7 +182,11 @@ class _ProductScreenState extends State<ProductScreen> {
   Future<void> _editSellingPrice(ProductItem product) async {
     final sellingPrice = await showDialog<String>(
       context: context,
-      builder: (_) => _SellingPriceDialog(initialPrice: product.sellingPrice),
+      builder: (_) => _SellingPriceDialog(
+        initialPrice: product.sellingPrice,
+        quantityLabel:
+            '${formatSellingQuantity(product.sellingQuantity)} ${product.unit}',
+      ),
     );
     if (sellingPrice == null || !mounted) return;
 
@@ -198,6 +200,7 @@ class _ProductScreenState extends State<ProductScreen> {
           unit: product.unit,
           purchasePrice: product.purchasePrice ?? '0',
           sellingPrice: sellingPrice,
+          sellingQuantity: product.sellingQuantity,
           gstRate: product.gstRate,
         ),
       );
@@ -413,7 +416,7 @@ class _ProductScreenState extends State<ProductScreen> {
                     [
                       product.category,
                       if (product.sku.isNotEmpty) product.sku,
-                      product.unit,
+                      '${formatSellingQuantity(product.sellingQuantity)} ${product.unit}',
                     ].join(' · '),
                   ),
                 ],
@@ -426,7 +429,7 @@ class _ProductScreenState extends State<ProductScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    'Sell ₹${product.sellingPrice}',
+                    'Sell ₹${product.sellingPrice} / ${formatSellingQuantity(product.sellingQuantity)} ${product.unit}',
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                   if (widget.canManage)
@@ -463,9 +466,13 @@ class _ProductScreenState extends State<ProductScreen> {
 }
 
 class _SellingPriceDialog extends StatefulWidget {
-  const _SellingPriceDialog({required this.initialPrice});
+  const _SellingPriceDialog({
+    required this.initialPrice,
+    required this.quantityLabel,
+  });
 
   final String initialPrice;
+  final String quantityLabel;
 
   @override
   State<_SellingPriceDialog> createState() => _SellingPriceDialogState();
@@ -503,14 +510,14 @@ class _SellingPriceDialogState extends State<_SellingPriceDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Edit selling price'),
+      title: Text('Edit price for ${widget.quantityLabel}'),
       content: TextField(
         key: const Key('sellingPriceQuickEditField'),
         controller: _controller,
         autofocus: true,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         decoration: InputDecoration(
-          labelText: 'Selling price',
+          labelText: 'Selling price (₹)',
           prefixText: '₹ ',
           errorText: _error,
         ),
@@ -551,15 +558,21 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     final product = widget.product;
     _controllers = {
       'name': TextEditingController(text: product?.name ?? ''),
-      'sku': TextEditingController(text: product?.sku ?? ''),
-      'category': TextEditingController(text: product?.category ?? ''),
       'purchasePrice': TextEditingController(
-        text: product?.purchasePrice ?? '',
+        text: product?.purchasePrice ?? '0.00',
       ),
       'sellingPrice': TextEditingController(text: product?.sellingPrice ?? ''),
-      'gstRate': TextEditingController(text: product?.gstRate ?? '0'),
+      'sellingQuantity': TextEditingController(
+        text: product?.sellingQuantity ?? '1',
+      ),
+      'openingStockQuantity': TextEditingController(
+        text: product?.openingStockQuantity ?? '0',
+      ),
     };
-    _unit = product?.unit ?? 'piece';
+    _unit = product?.unit ?? 'g';
+    if (product == null) {
+      _controllers['sellingQuantity']!.text = _defaultQuantity(_unit);
+    }
   }
 
   @override
@@ -586,7 +599,8 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     required double maximum,
   }) {
     if (value == null ||
-        !RegExp(r'^\d+(?:\.\d{0,2})?$').hasMatch(value.trim())) {
+        !RegExp(r'^\d+(?:\.\d{0,' + scale.toString() + r'})?$')
+            .hasMatch(value.trim())) {
       return '$label must be a valid non-negative number.';
     }
     final numericValue = double.tryParse(value);
@@ -606,15 +620,20 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     Navigator.of(context).pop(
       ProductDraft(
         name: _controllers['name']!.text,
-        sku: _controllers['sku']!.text,
-        category: _controllers['category']!.text,
         unit: _unit,
         purchasePrice: _controllers['purchasePrice']!.text,
         sellingPrice: _controllers['sellingPrice']!.text,
-        gstRate: _controllers['gstRate']!.text.trim(),
+        sellingQuantity: _controllers['sellingQuantity']!.text,
+        openingStockQuantity: _controllers['openingStockQuantity']!.text,
+        gstRate: widget.product?.gstRate ?? '0',
+        category: widget.product?.category ?? 'General',
+        sku: widget.product?.sku ?? '',
       ),
     );
   }
+
+  String _defaultQuantity(String unit) =>
+      unit == 'g' || unit == 'ml' ? '100' : '1';
 
   @override
   Widget build(BuildContext context) {
@@ -635,70 +654,69 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                   key: 'productNameField',
                   validator: (value) => _required(value, 'Product name', 160),
                 ),
-                _textField(
-                  'sku',
-                  'Product code (optional)',
-                  key: 'productSkuField',
-                  validator: (value) =>
-                      value != null && value.trim().length > 64
-                      ? 'Product code must be 64 characters or fewer.'
-                      : null,
+                DropdownButtonFormField<String>(
+                  key: const Key('productUnitField'),
+                  initialValue: _unit,
+                  decoration: const InputDecoration(
+                    labelText: 'Selling unit',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: productUnits
+                      .map(
+                        (unit) =>
+                            DropdownMenuItem(value: unit, child: Text(unit)),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() {
+                        _unit = value;
+                        _controllers['sellingQuantity']!.text =
+                            _defaultQuantity(value);
+                      });
+                    }
+                  },
                 ),
+                const SizedBox(height: 14),
+                _numberField(
+                  'sellingQuantity',
+                  'Quantity',
+                  'productQuantityField',
+                  scale: 3,
+                  minimum: 0.001,
+                  maximum: 999999999.999,
+                  suffix: _unit,
+                ),
+                _numberField(
+                  'purchasePrice',
+                  'Purchase price (₹)',
+                  'productPurchasePriceField',
+                  scale: 2,
+                  minimum: 0,
+                  maximum: 9999999999.99,
+                ),
+                if (!isEditing)
+                  _numberField(
+                    'openingStockQuantity',
+                    'Opening / old stock quantity',
+                    'productOpeningStockQuantityField',
+                    scale: 3,
+                    minimum: 0,
+                    maximum: 999999999.999,
+                    suffix: _unit,
+                  ),
                 Row(
                   children: [
-                    Expanded(
-                      child: _textField(
-                        'category',
-                        'Category',
-                        key: 'productCategoryField',
-                        validator: (value) => _required(value, 'Category', 80),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        key: const Key('productUnitField'),
-                        initialValue: _unit,
-                        decoration: const InputDecoration(
-                          labelText: 'Unit',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: productUnits
-                            .map(
-                              (unit) => DropdownMenuItem(
-                                value: unit,
-                                child: Text(unit),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          if (value != null) setState(() => _unit = value);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _numberField(
-                        'purchasePrice',
-                        'Purchase price',
-                        'productPurchasePriceField',
-                        scale: 2,
-                        minimum: 0,
-                        maximum: 9999999999.99,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
                     Expanded(
                       child: _numberField(
                         'sellingPrice',
-                        'Selling price',
+                        'Selling price (₹)',
                         'productSellingPriceField',
                         scale: 2,
                         minimum: 0.01,
                         maximum: 9999999999.99,
+                        helperText:
+                            'Price for ${_controllers['sellingQuantity']!.text} $_unit',
                       ),
                     ),
                   ],
@@ -750,6 +768,8 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     required int scale,
     required double minimum,
     required double maximum,
+    String? suffix,
+    String? helperText,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -760,6 +780,8 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
         decoration: InputDecoration(
           labelText: label,
           border: const OutlineInputBorder(),
+          suffixText: suffix,
+          helperText: helperText,
         ),
         validator: (value) => _decimal(
           value,

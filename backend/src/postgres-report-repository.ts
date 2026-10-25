@@ -100,9 +100,15 @@ export class PostgresReportRepository implements ReportRepository {
     const result = await pool.query<{
       invoice_count: string;
       total_sales: string;
+      stock_product_count: string;
     }>(
       `SELECT COUNT(*)::text AS invoice_count,
-              COALESCE(SUM(grand_total), 0)::text AS total_sales
+              COALESCE(SUM(grand_total), 0)::text AS total_sales,
+              (
+                SELECT COUNT(DISTINCT id)::text
+                FROM products
+                WHERE is_active = TRUE AND stock_quantity > 0
+              ) AS stock_product_count
        FROM invoices
        WHERE created_at >= $1::date
          AND created_at < ($1::date + INTERVAL '1 day')
@@ -115,6 +121,7 @@ export class PostgresReportRepository implements ReportRepository {
       date,
       invoiceCount: Number(summary.invoice_count),
       totalSales: summary.total_sales,
+      stockProductCount: Number(summary.stock_product_count),
       paymentSummary: await paymentSummary(pool, date, date),
     };
   }

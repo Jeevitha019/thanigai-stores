@@ -1,3 +1,6 @@
+import 'dart:ui' as ui;
+
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:malligai_kadai/billing/billing_gateway.dart';
 import 'package:malligai_kadai/billing/receipt_formatter.dart';
@@ -45,10 +48,7 @@ void main() {
   );
 
   test('formats the receipt-roll layout, calculations, and branding', () {
-    final lines = ReceiptFormatter.format(
-      invoice,
-      paperWidthMm: 80,
-    );
+    final lines = ReceiptFormatter.format(invoice, paperWidthMm: 80);
     final receipt = lines.join('\n');
 
     expect(receipt, contains('THANIGAI STORES'));
@@ -101,6 +101,32 @@ void main() {
       'Developed By ZEROPOINT LABS',
       'www.zeropointlabs.in',
     ]);
+  });
+
+  test('formats proportional unit prices with enough precision', () {
+    final lines = ReceiptFormatter.format(
+      SavedInvoice(
+        invoiceNumber: 'INV-PROPORTIONAL',
+        subtotal: '1.00',
+        grandTotal: '1.00',
+        createdAt: '2026-10-19T12:30:00.000Z',
+        items: const [
+          SavedInvoiceItem(
+            productName: 'Rice',
+            sku: '',
+            unit: 'g',
+            unitPrice: '0.033333',
+            quantity: '30',
+            lineTotal: '1.00',
+          ),
+        ],
+        payments: const [InvoicePayment(method: 'cash', amount: '1.00')],
+        replayed: false,
+      ),
+      paperWidthMm: 80,
+    );
+
+    expect(lines.join('\n'), contains('₹0.033333'));
   });
 
   test('wraps long product names without shifting receipt amount columns', () {
@@ -292,6 +318,101 @@ void main() {
     );
   });
 
+  test(
+    'aligns units and money for short and wrapped multi-item rows',
+    () async {
+      const testInvoice = SavedInvoice(
+        invoiceNumber: 'PRINTER-TEST',
+        cashierName: 'Test mode',
+        subtotal: '68.00',
+        discountAmount: '5.00',
+        taxableAmount: '63.00',
+        cgstAmount: '1.58',
+        sgstAmount: '1.57',
+        totalTax: '3.15',
+        gstEnabled: true,
+        grandTotal: '66.15',
+        createdAt: '2026-10-19T12:30:00.000Z',
+        items: [
+          SavedInvoiceItem(
+            productName: 'Basmati Rice',
+            sku: 'TEST-RICE',
+            unit: 'kg',
+            unitPrice: '25.00',
+            quantity: '2',
+            lineTotal: '50.00',
+          ),
+          SavedInvoiceItem(
+            productName: 'Organic Traditional Appalam Papad Special Pack XL',
+            sku: 'TEST-APPALAM',
+            unit: 'pack',
+            unitPrice: '12.00',
+            quantity: '1',
+            lineTotal: '12.00',
+          ),
+          SavedInvoiceItem(
+            productName: 'Tea Powder',
+            sku: 'TEST-TEA',
+            unit: 'packet',
+            unitPrice: '2.00',
+            quantity: '3',
+            lineTotal: '6.00',
+          ),
+        ],
+        payments: [
+          InvoicePayment(method: 'cash', amount: '20.00'),
+          InvoicePayment(method: 'upi', amount: '46.15'),
+        ],
+        replayed: false,
+      );
+
+      for (final width in [58, 80]) {
+        final columns = width == 58 ? 30 : 44;
+        final lines = ReceiptFormatter.format(
+          testInvoice,
+          paperWidthMm: width,
+          printableWidthMm: width == 58 ? 50 : 72,
+          testMode: true,
+        );
+        final longNameIndex = lines.indexWhere(
+          (line) => line.trimLeft().startsWith('Organic'),
+        );
+        final longNameRows = lines
+            .skip(longNameIndex)
+            .takeWhile((line) => !line.startsWith('-'));
+        final riceRow = lines.singleWhere(
+          (line) => line.contains('Basmati') && line.contains('₹50.00'),
+        );
+        final receipt = lines.join('\n');
+        final pdfBytes = await WindowsReceiptPrinterGateway().buildPdf(
+          testInvoice,
+          paperWidthMm: width,
+          printableWidthMm: width == 58 ? 50 : 72,
+          testMode: true,
+        );
+        final mediaBox = RegExp(r'/MediaBox\s*\[0 0 ([\d.]+) ([\d.]+)\]')
+            .firstMatch(String.fromCharCodes(pdfBytes));
+        expect(longNameIndex, greaterThanOrEqualTo(0));
+        expect(longNameRows.length, greaterThan(1));
+        expect(longNameRows.every((line) => line.length == columns), isTrue);
+        expect(riceRow, contains('2 kg'));
+        expect(riceRow, contains('₹25.00'));
+        expect(riceRow.trimRight(), endsWith('₹50.00'));
+        expect(receipt, contains('₹5.00'));
+        expect(receipt, contains('₹3.15'));
+        expect(receipt, contains('₹66.15'));
+        expect(receipt, contains('CASH ₹20.00 + UPI ₹46.15'));
+        expect(lines.every((line) => line.length <= columns), isTrue);
+        expect(mediaBox, isNotNull);
+        expect(
+          double.parse(mediaBox!.group(1)!),
+          closeTo(width * 72 / 25.4, 0.01),
+        );
+        expect(double.parse(mediaBox.group(2)!), lessThan(300 * 72 / 25.4));
+      }
+    },
+  );
+
   test('builds a PDF receipt for either thermal roll width', () async {
     final printer = WindowsReceiptPrinterGateway();
     for (final width in [58, 80]) {
@@ -318,6 +439,39 @@ void main() {
       );
     }
   });
+
+  test(
+    'preserves thermal logo transparency and colors in the receipt PDF',
+    () async {
+      final logoData = await rootBundle.load(
+        'assets/thanigai_stores_receipt_logo_transparent.png',
+      );
+      final codec = await ui.instantiateImageCodec(
+        logoData.buffer.asUint8List(),
+      );
+      final logo = (await codec.getNextFrame()).image;
+      final rgba = (await logo.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+      int channel(int x, int y, int offset) =>
+          rgba.getUint8((y * logo.width + x) * 4 + offset);
+
+      expect(channel(0, 0, 3), 0);
+      expect(channel(logo.width - 1, 0, 3), 0);
+      expect(channel(0, logo.height - 1, 3), 0);
+      expect(channel(150, 130, 0), 252);
+      expect(channel(150, 130, 1), 239);
+      expect(channel(150, 130, 2), 36);
+      expect(channel(150, 130, 3), 255);
+      logo.dispose();
+      codec.dispose();
+
+      final pdf = await WindowsReceiptPrinterGateway().buildPdf(
+        invoice,
+        paperWidthMm: 80,
+        printableWidthMm: 72,
+      );
+      expect(String.fromCharCodes(pdf), contains('/SMask'));
+    },
+  );
 
   test('builds a separate A4 invoice PDF', () async {
     final bytes = await WindowsReceiptPrinterGateway().buildPdf(

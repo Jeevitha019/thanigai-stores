@@ -1,4 +1,3 @@
-
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -40,6 +39,13 @@ BigInt? _parseQuantityInput(String value, String baseUnit, String inputUnit) {
   if (baseUnit == 'g' && inputUnit == 'kg') {
     return inputMilli * BigInt.from(1000);
   }
+  if (baseUnit == 'litre' && inputUnit == 'ml') {
+    if (inputMilli % BigInt.from(1000) != BigInt.zero) return null;
+    return inputMilli ~/ BigInt.from(1000);
+  }
+  if (baseUnit == 'ml' && inputUnit == 'litre') {
+    return inputMilli * BigInt.from(1000);
+  }
   return null;
 }
 
@@ -48,6 +54,10 @@ String _displayQuantity(_CartLine line) {
   if (line.product.unit == 'kg' && line.selectedUnit == 'g') {
     quantityMilli *= BigInt.from(1000);
   } else if (line.product.unit == 'g' && line.selectedUnit == 'kg') {
+    quantityMilli ~/= BigInt.from(1000);
+  } else if (line.product.unit == 'litre' && line.selectedUnit == 'ml') {
+    quantityMilli *= BigInt.from(1000);
+  } else if (line.product.unit == 'ml' && line.selectedUnit == 'litre') {
     quantityMilli ~/= BigInt.from(1000);
   }
   final value =
@@ -59,6 +69,8 @@ String _displayQuantity(_CartLine line) {
 List<String> _quantityUnits(ProductItem product) => switch (product.unit) {
   'kg' => const ['kg', 'g'],
   'g' => const ['g', 'kg'],
+  'litre' => const ['litre', 'ml'],
+  'ml' => const ['ml', 'litre'],
   _ => [product.unit],
 };
 
@@ -103,7 +115,7 @@ class _ProductQuantityDialog extends StatefulWidget {
 class _ProductQuantityDialogState extends State<_ProductQuantityDialog> {
   late String? _selectedUnit = widget.product.unit;
   late final TextEditingController _quantityController = TextEditingController(
-    text: _selectedUnit == 'g' ? '100' : '1',
+    text: _selectedUnit == 'g' || _selectedUnit == 'ml' ? '100' : '1',
   );
   String? _error;
 
@@ -117,7 +129,7 @@ class _ProductQuantityDialogState extends State<_ProductQuantityDialog> {
     if (unit == null) return;
     setState(() {
       _selectedUnit = unit;
-      _quantityController.text = unit == 'g' ? '100' : '1';
+      _quantityController.text = unit == 'g' || unit == 'ml' ? '100' : '1';
       _error = null;
     });
   }
@@ -145,7 +157,10 @@ class _ProductQuantityDialogState extends State<_ProductQuantityDialog> {
   @override
   Widget build(BuildContext context) {
     final requiresUnit =
-        widget.product.unit == 'kg' || widget.product.unit == 'g';
+        widget.product.unit == 'kg' ||
+        widget.product.unit == 'g' ||
+        widget.product.unit == 'litre' ||
+        widget.product.unit == 'ml';
     return AlertDialog(
       title: Text('Enter ${widget.product.name} quantity'),
       content: Column(
@@ -309,10 +324,25 @@ class _BillingScreenState extends State<BillingScreen> {
 
   BigInt _lineTotalCents(_CartLine line) {
     final unitPriceCents = _tryPriceCents(line.unitPrice);
-    if (unitPriceCents == null) return BigInt.zero;
+    final sellingQuantityMilli = _tryQuantityMilli(
+      line.product.sellingQuantity,
+    );
+    if (unitPriceCents == null ||
+        sellingQuantityMilli == null ||
+        sellingQuantityMilli <= BigInt.zero) {
+      return BigInt.zero;
+    }
     return (unitPriceCents * BigInt.from(line.quantityMilli) +
-            BigInt.from(500)) ~/
-        BigInt.from(1000);
+            sellingQuantityMilli ~/ BigInt.from(2)) ~/
+        sellingQuantityMilli;
+  }
+
+  BigInt? _tryQuantityMilli(String value) {
+    final trimmed = value.trim();
+    if (!RegExp(r'^\d+(?:\.\d{0,3})?$').hasMatch(trimmed)) return null;
+    final parts = trimmed.split('.');
+    return BigInt.parse(parts[0]) * BigInt.from(1000) +
+        BigInt.parse((parts.length > 1 ? parts[1] : '').padRight(3, '0'));
   }
 
   BigInt get _subtotalCents => _cart.values.fold(
@@ -705,7 +735,7 @@ class _BillingScreenState extends State<BillingScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          '₹${product.sellingPrice}',
+                          '₹${product.sellingPrice} / ${formatSellingQuantity(product.sellingQuantity)} ${product.unit}',
                           style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                         IconButton(
@@ -885,7 +915,8 @@ class _BillingScreenState extends State<BillingScreen> {
                     decimal: true,
                   ),
                   decoration: InputDecoration(
-                    labelText: 'Amount per ${product.unit}',
+                    labelText:
+                        'Price per ${formatSellingQuantity(product.sellingQuantity)} ${product.unit}',
                     prefixText: '₹',
                     isDense: true,
                     border: OutlineInputBorder(),

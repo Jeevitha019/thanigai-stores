@@ -20,10 +20,10 @@ class _ReceiptPrinterSettingsScreenState
   ReceiptPrinterSettings? _settings;
   String? _selectedUrl;
   int _paperWidthMm = ReceiptPrinterSettings.defaultPaperWidthMm;
-  double _printableWidthMm =
-      ReceiptPrinterSettings.defaultPrintableWidthMm;
-  final TextEditingController _printableWidthController =
-      TextEditingController(text: '72.0');
+  double _printableWidthMm = ReceiptPrinterSettings.defaultPrintableWidthMm;
+  final TextEditingController _printableWidthController = TextEditingController(
+    text: '72.0',
+  );
   bool _a4Invoices = false;
   bool _loading = true;
   bool _saving = false;
@@ -146,21 +146,45 @@ class _ReceiptPrinterSettingsScreenState
     const testInvoice = SavedInvoice(
       invoiceNumber: 'PRINTER-TEST',
       cashierName: 'Test mode',
-      subtotal: '1.00',
-      taxableAmount: '1.00',
-      grandTotal: '1.00',
+      subtotal: '68.00',
+      discountAmount: '5.00',
+      taxableAmount: '63.00',
+      cgstAmount: '1.58',
+      sgstAmount: '1.57',
+      totalTax: '3.15',
+      gstEnabled: true,
+      grandTotal: '66.15',
       createdAt: '2026-01-01T12:00:00.000Z',
       items: [
         SavedInvoiceItem(
-          productName: 'Printer test - not a sale',
-          sku: 'TEST',
-          unit: 'piece',
-          unitPrice: '1.00',
+          productName: 'Basmati Rice',
+          sku: 'TEST-RICE',
+          unit: 'kg',
+          unitPrice: '25.00',
+          quantity: '2',
+          lineTotal: '50.00',
+        ),
+        SavedInvoiceItem(
+          productName: 'Organic Traditional Appalam Papad Special Pack XL',
+          sku: 'TEST-APPALAM',
+          unit: 'pack',
+          unitPrice: '12.00',
           quantity: '1',
-          lineTotal: '1.00',
+          lineTotal: '12.00',
+        ),
+        SavedInvoiceItem(
+          productName: 'Tea Powder',
+          sku: 'TEST-TEA',
+          unit: 'packet',
+          unitPrice: '2.00',
+          quantity: '3',
+          lineTotal: '6.00',
         ),
       ],
-      payments: [InvoicePayment(method: 'cash', amount: '1.00')],
+      payments: [
+        InvoicePayment(method: 'cash', amount: '20.00'),
+        InvoicePayment(method: 'upi', amount: '46.15'),
+      ],
       replayed: false,
     );
     try {
@@ -297,8 +321,7 @@ class _ReceiptPrinterSettingsScreenState
                           ],
                           decoration: const InputDecoration(
                             labelText: 'Printable layout target (mm)',
-                            helperText:
-                                'Default 72 mm is an advertised target, not measured driver printable width.',
+                            helperText: 'Default 72 mm is an advertised target, not measured driver printable width.',
                             suffixText: 'mm',
                             border: OutlineInputBorder(),
                           ),

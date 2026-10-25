@@ -1,7 +1,6 @@
 import { Pool } from 'pg';
 import { getDatabasePool } from './database';
 import { insertAuditEvent } from './audit';
-import { ProductInput } from './product-types';
 import { AuthRepository, PublicUser, StoredUser, UserRole } from './types';
 
 interface UserRow {
@@ -52,11 +51,7 @@ export function createPostgresAuthRepository(
       return (result.rowCount ?? 0) > 0;
     },
 
-    async createInitialAdmin(
-      username,
-      passwordHash,
-      sampleProducts: ProductInput[] = [],
-    ): Promise<PublicUser> {
+    async createInitialAdmin(username, passwordHash): Promise<PublicUser> {
       const client = await getPool().connect();
       try {
         await client.query('BEGIN');
@@ -86,70 +81,6 @@ export function createPostgresAuthRepository(
           entityType: 'user',
           entityId: row.id,
         });
-
-        const seenProductCodes = new Set<string>();
-        const seenProductNames = new Set<string>();
-        for (const product of sampleProducts) {
-          const code = product.sku?.trim().toLowerCase();
-          const identity =
-            `${product.name.trim().toLowerCase()}|${product.category.trim().toLowerCase()}`;
-          if (
-            (code && seenProductCodes.has(code)) ||
-            seenProductNames.has(identity)
-          ) {
-            continue;
-          }
-          if (code) seenProductCodes.add(code);
-          seenProductNames.add(identity);
-
-          const existingProduct = await client.query(
-            `SELECT 1
-             FROM products
-             WHERE ($1::text IS NOT NULL AND LOWER(sku) = $1)
-                OR (LOWER(name) = $2 AND LOWER(category) = $3)
-             LIMIT 1`,
-            [
-              code ?? null,
-              product.name.trim().toLowerCase(),
-              product.category.trim().toLowerCase(),
-            ],
-          );
-          if (existingProduct.rowCount) continue;
-
-          const seeded = await client.query<{
-            id: string;
-            sku: string | null;
-          }>(
-            `INSERT INTO products (
-               name, sku, category, unit, purchase_price, selling_price,
-               stock_quantity, low_stock_threshold, gst_rate
-             )
-             VALUES ($1, $2, $3, $4, $5, $6, 0, 0, $7)
-             RETURNING id, sku`,
-            [
-              product.name,
-              product.sku,
-              product.category,
-              product.unit,
-              product.purchasePrice,
-              product.sellingPrice,
-              product.gstRate,
-            ],
-          );
-          const seededProduct = seeded.rows[0];
-          if (!seededProduct) {
-            throw new Error(
-              'A sample product could not be added to the catalogue.',
-            );
-          }
-          await insertAuditEvent(client, {
-            actorId: row.id,
-            action: 'product.created',
-            entityType: 'product',
-            entityId: seededProduct.id,
-            details: { sku: seededProduct.sku },
-          });
-        }
 
         await client.query('COMMIT');
         return toPublicUser(row);

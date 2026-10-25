@@ -12,6 +12,7 @@ import '../products/product_gateway.dart';
 import '../products/product_screen.dart';
 import '../reports/reports_gateway.dart';
 import '../reports/reports_screens.dart';
+import '../stocks/stock_management_screen.dart';
 
 class AdminHomeScreen extends StatelessWidget {
   const AdminHomeScreen({
@@ -237,6 +238,23 @@ class _RoleHomeScreenState extends State<_RoleHomeScreen> {
     );
   }
 
+  Future<void> _openStocks() {
+    final gateway = widget.productGateway;
+    if (gateway is! StockGateway) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Stock management is unavailable.')),
+      );
+      return Future<void>.value();
+    }
+    final stockGateway = gateway as StockGateway;
+    return Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            StockManagementScreen(gateway: stockGateway, canManage: _isAdmin),
+      ),
+    );
+  }
+
   Future<void> _openAddProduct() {
     return Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -308,6 +326,12 @@ class _RoleHomeScreenState extends State<_RoleHomeScreen> {
       onPressed: _openInvoiceHistory,
     ),
     if (_isAdmin) ...[
+      _PosNavigationItem(
+        label: 'Stocks',
+        icon: Icons.inventory_2_outlined,
+        key: const Key('openStocksButton'),
+        onPressed: _openStocks,
+      ),
       _PosNavigationItem(
         label: 'Reports',
         icon: Icons.query_stats_rounded,
@@ -1039,9 +1063,16 @@ class _AdminDashboardCards extends StatelessWidget {
                     icon: Icons.receipt_long_outlined,
                     color: Color(0xFF4274A4),
                   ),
+                  _DashboardStat(
+                    title: 'Stocks',
+                    value: '',
+                    detail: 'Products with available stock',
+                    icon: Icons.inventory_2_outlined,
+                    color: Color(0xFF9A6A32),
+                  ),
                 ];
           final columns = constraints.maxWidth > 1050
-              ? 2
+              ? 3
               : constraints.maxWidth > 530
               ? 2
               : 1;
@@ -1085,6 +1116,13 @@ class _AdminDashboardCards extends StatelessWidget {
         detail: 'Invoices today',
         icon: Icons.receipt_long_outlined,
         color: const Color(0xFF4274A4),
+      ),
+      _DashboardStat(
+        title: 'Stocks',
+        value: '${stats.dashboard.stockProductCount}',
+        detail: 'Products with available stock',
+        icon: Icons.inventory_2_outlined,
+        color: const Color(0xFF9A6A32),
       ),
     ];
   }

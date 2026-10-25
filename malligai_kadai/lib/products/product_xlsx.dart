@@ -13,11 +13,11 @@ Uint8List encodeProductsXlsx(List<ProductItem> products) {
   final worksheet =
       '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<dimension ref="A1:F$rowCount"/>
+<dimension ref="A1:I$rowCount"/>
 <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
-<cols><col min="1" max="1" width="32" customWidth="1"/><col min="2" max="2" width="20" customWidth="1"/><col min="3" max="3" width="24" customWidth="1"/><col min="4" max="4" width="14" customWidth="1"/><col min="5" max="6" width="18" customWidth="1"/></cols>
-<sheetData><row r="1">${_textCell('A', 1, 'Product Name', style: 1)}${_textCell('B', 1, 'Product Code', style: 1)}${_textCell('C', 1, 'Category', style: 1)}${_textCell('D', 1, 'Unit', style: 1)}${_textCell('E', 1, 'Purchase Price', style: 1)}${_textCell('F', 1, 'Selling Price', style: 1)}</row>${rows.join()}
-</sheetData><autoFilter ref="A1:F$rowCount"/>
+<cols><col min="1" max="1" width="32" customWidth="1"/><col min="2" max="2" width="20" customWidth="1"/><col min="3" max="3" width="24" customWidth="1"/><col min="4" max="4" width="14" customWidth="1"/><col min="5" max="6" width="18" customWidth="1"/><col min="7" max="7" width="26" customWidth="1"/><col min="8" max="9" width="18" customWidth="1"/></cols>
+<sheetData><row r="1">${_textCell('A', 1, 'Product Name', style: 1)}${_textCell('B', 1, 'Product Code', style: 1)}${_textCell('C', 1, 'Category', style: 1)}${_textCell('D', 1, 'Unit', style: 1)}${_textCell('E', 1, 'Purchase Price', style: 1)}${_textCell('F', 1, 'Selling Price', style: 1)}${_textCell('G', 1, 'Opening/Old Stock Quantity', style: 1)}${_textCell('H', 1, 'Stock Unit', style: 1)}${_textCell('I', 1, 'Selling Quantity', style: 1)}</row>${rows.join()}
+</sheetData><autoFilter ref="A1:I$rowCount"/>
 </worksheet>''';
   final archive = Archive()
     ..addFile(
@@ -81,7 +81,18 @@ String _productRow(ProductItem product, int row) =>
     '${_textCell('D', row, product.unit)}'
     '${_priceCell('E', row, product.purchasePrice, optional: true)}'
     '${_priceCell('F', row, product.sellingPrice)}'
+    '${_numberCell('G', row, product.openingStockQuantity)}'
+    '${_textCell('H', row, product.unit)}'
+    '${_numberCell('I', row, product.sellingQuantity)}'
     '</row>';
+
+String _numberCell(String column, int row, String value) {
+  final normalized = value.trim();
+  if (!RegExp(r'^\d+(?:\.\d+)?$').hasMatch(normalized)) {
+    throw const FormatException('A product quantity is not a valid number.');
+  }
+  return '<c r="$column$row"><v>$normalized</v></c>';
+}
 
 String _textCell(String column, int row, String value, {int style = 0}) =>
     '<c r="$column$row" t="inlineStr" s="$style"><is><t xml:space="preserve">${_xml(value)}</t></is></c>';

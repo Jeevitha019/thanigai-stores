@@ -6,13 +6,11 @@ import { deepStrictEqual, equal, match, ok } from 'node:assert/strict';
 import { createApp } from './app';
 import { PublicUser, StoredUser, UserRole } from './types';
 import { ReportRepository } from './report-types';
-import { ProductInput } from './product-types';
 
 const testSecret = 'test-only-jwt-secret-with-more-than-thirty-two-bytes';
 
 class FakeAuthRepository {
   readonly users = new Map<string, StoredUser>();
-  readonly products = new Map<string, ProductInput>();
   nextId = 1;
 
   async findByUsername(username: string): Promise<StoredUser | null> {
@@ -35,7 +33,6 @@ class FakeAuthRepository {
   async createInitialAdmin(
     username: string,
     passwordHash: string,
-    sampleProducts: ProductInput[] = [],
   ): Promise<PublicUser> {
     if (await this.hasAdmin()) {
       throw Object.assign(new Error('An admin account already exists.'), {
@@ -52,21 +49,6 @@ class FakeAuthRepository {
       passwordHash,
     };
     this.users.set(username.toLowerCase(), user);
-    for (const product of sampleProducts) {
-      const identity =
-        `${product.name.trim().toLowerCase()}|${product.category.trim().toLowerCase()}`;
-      if (
-        [...this.products.values()].some(
-          (existing) =>
-            existing.sku?.toLowerCase() === product.sku?.toLowerCase() ||
-            `${existing.name.trim().toLowerCase()}|${existing.category.trim().toLowerCase()}` ===
-              identity,
-        )
-      ) {
-        continue;
-      }
-      this.products.set(identity, product);
-    }
     return { id: user.id, username, role: 'admin' };
   }
 
@@ -121,6 +103,7 @@ describe('authentication API', () => {
         date,
         totalSales: '0.00',
         invoiceCount: 0,
+        stockProductCount: 0,
         paymentSummary: [],
       };
     },
@@ -413,7 +396,13 @@ it('limits repeated login requests', async () => {
         repository: setupRepository,
         reportRepository: {
           async dashboard(date) {
-            return { date, totalSales: '0.00', invoiceCount: 0, paymentSummary: [] };
+            return {
+              date,
+              totalSales: '0.00',
+              invoiceCount: 0,
+              stockProductCount: 0,
+              paymentSummary: [],
+            };
           },
           async sales(startDate, endDate) {
             return {
@@ -474,32 +463,13 @@ it('limits repeated login requests', async () => {
       equal(await setupRepository.hasAdmin(), false);
     });
 
-    it('seeds the initial catalogue once with the initial Admin account', async () => {
+    it('does not seed bundled sample products during initial Admin setup', async () => {
       const setupRepository = new FakeAuthRepository();
       const setupApp = createApp({
         jwtSecret: testSecret,
         initialSetupToken: 'test-only-initial-setup-token-32-bytes',
         repository: setupRepository,
       });
-      const product: ProductInput = {
-        name: 'Ponni Rice',
-        sku: 'TS-PONNI-RICE',
-        category: 'Rice & Grains',
-        unit: 'kg',
-        purchasePrice: '54.00',
-        sellingPrice: '60.00',
-        gstRate: '0.00',
-      };
-      const existingProduct: ProductInput = {
-        ...product,
-        name: 'Existing edited product',
-        sku: 'TS-EXISTING',
-        sellingPrice: '99.00',
-      };
-      setupRepository.products.set(
-        'existing edited product|rice & grains',
-        existingProduct,
-      );
       const headers = {
         'X-Initial-Setup-Token': 'test-only-initial-setup-token-32-bytes',
       };
@@ -509,12 +479,10 @@ it('limits repeated login requests', async () => {
         .send({
           username: 'first-owner',
           password: 'Milk',
-          sampleProducts: [product, product, existingProduct],
+          sampleProducts: [{ invalid: 'ignored legacy payload' }],
         })
         .expect(201);
-      equal(setupRepository.products.size, 2);
-      equal(setupRepository.products.get('ponni rice|rice & grains')?.sellingPrice, '60.00');
-      equal(setupRepository.products.get('existing edited product|rice & grains')?.sellingPrice, '99.00');
+      equal(await setupRepository.hasAdmin(), true);
 
       await request(setupApp)
         .post('/setup/admin')
@@ -522,10 +490,9 @@ it('limits repeated login requests', async () => {
         .send({
           username: 'second-owner',
           password: 'Another-strong-password',
-          sampleProducts: [product],
         })
         .expect(409);
-      equal(setupRepository.products.size, 2);
+      equal(await setupRepository.hasAdmin(), true);
     });
   });
 

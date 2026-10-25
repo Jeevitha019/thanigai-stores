@@ -10,6 +10,7 @@ export interface DashboardReport {
   date: string;
   totalSales: string;
   invoiceCount: number;
+  stockProductCount: number;
   paymentSummary: PaymentSummary[];
 }
 

@@ -8,7 +8,6 @@ import request from 'supertest';
 import { createApp } from './app';
 import { getDatabasePool } from './database';
 import { createPostgresAuthRepository } from './postgres-auth-repository';
-import { ProductInput } from './product-types';
 
 const testSecret = 'test-only-postgres-auth-secret-with-more-than-thirty-two-bytes';
 const hasDatabaseConfig = Boolean(
@@ -20,16 +19,6 @@ const hasDatabaseConfig = Boolean(
 const schema = `auth_test_${randomUUID().replace(/-/g, '')}`;
 let testPool: Pool | undefined;
 let schemaCreated = false;
-
-const sampleProduct: ProductInput = {
-  name: 'Ponni Rice',
-  sku: 'TS-PONNI-RICE',
-  category: 'Rice & Grains',
-  unit: 'kg',
-  purchasePrice: '54.00',
-  sellingPrice: '60.00',
-  gstRate: '0.00',
-};
 
 before(async () => {
   if (!hasDatabaseConfig) return;
@@ -61,6 +50,8 @@ before(async () => {
       unit VARCHAR(16) NOT NULL,
       purchase_price NUMERIC(12, 2) NOT NULL,
       selling_price NUMERIC(12, 2) NOT NULL,
+      selling_quantity NUMERIC(12, 3) NOT NULL DEFAULT 1.000,
+      opening_stock_quantity NUMERIC(12, 3) NOT NULL DEFAULT 0.000,
       stock_quantity NUMERIC(12, 3) NOT NULL,
       low_stock_threshold NUMERIC(12, 3) NOT NULL,
       gst_rate NUMERIC(5, 2) NOT NULL
@@ -90,7 +81,7 @@ after(async () => {
 });
 
 it(
-  'commits initial Admin, one-time products, existing edits, and password updates in PostgreSQL',
+  'creates the initial Admin without seeding or changing products in PostgreSQL',
   { skip: !hasDatabaseConfig },
   async () => {
     ok(testPool);
@@ -113,15 +104,6 @@ it(
       repository,
       'owner',
       initialPasswordHash,
-      [
-        sampleProduct,
-        sampleProduct,
-        {
-          ...sampleProduct,
-          name: 'Different name with existing code',
-          sku: 'TS-EXISTING',
-        },
-      ],
     );
     equal(admin.username, 'owner');
 
@@ -132,10 +114,9 @@ it(
     }>(
       'SELECT name, sku, selling_price FROM products ORDER BY id',
     );
-    equal(products.rowCount, 2);
+    equal(products.rowCount, 1);
+    equal(products.rows[0].name, 'Edited existing product');
     equal(products.rows[0].selling_price, '99.00');
-    equal(products.rows[1].sku, sampleProduct.sku);
-    equal(products.rows[1].selling_price, '60.00');
 
     const app = createApp({
       jwtSecret: testSecret,
@@ -179,7 +160,7 @@ it(
     );
     equal(
       auditEvents.rows.map(({ action }) => action).join(','),
-      'auth.initial_admin_created,product.created,auth.login,auth.password.changed,auth.login',
+      'auth.initial_admin_created,auth.login,auth.password.changed,auth.login',
     );
   },
 );

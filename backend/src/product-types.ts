@@ -17,6 +17,9 @@ export interface Product {
   unit: ProductUnit;
   purchasePrice: string;
   sellingPrice: string;
+  sellingQuantity: string;
+  openingStockQuantity?: string;
+  stockQuantity?: string;
   gstRate: string;
   createdAt: string;
   updatedAt: string;
@@ -29,6 +32,8 @@ export interface ProductInput {
   unit: ProductUnit;
   purchasePrice: string;
   sellingPrice: string;
+  sellingQuantity: string;
+  openingStockQuantity?: string;
   gstRate: string;
 }
 

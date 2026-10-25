@@ -6,7 +6,8 @@ Phase 3 adds product management and cashier product lookup. Phase 4 adds the
 cart and invoice creation. Phase 5 adds GST settings and calculations, tax
 snapshots, and Cash/UPI/Card payments. Phase 6 adds local Windows thermal
 receipt preview, printing, and reprinting. Phase 7 adds Admin dashboards,
-sales reports, audit logs, and database backup/restore.
+sales reports, audit logs, and database backup/restore. Phase 9 adds separate
+old/new stock batches and FIFO inventory deductions at checkout.
 
 ## Phase 8: Install the Windows application
 
@@ -46,15 +47,26 @@ for multiple shops using the same Windows account. The previous machine-wide
 PostgreSQL service and any data under `%ProgramData%\Malligai Kadai` are not
 automatically changed or migrated by this per-user installer.
 
-The shop database starts without development data. The app applies pending
-versioned migrations safely, then creates the initial Admin account and seeds
-the 88 products from the bundled `assets/sample_products.xlsx` catalogue in the
-same first-run database transaction. The seed skips product codes or
-name/category pairs already present and never overwrites existing products.
-It runs only while creating the first Admin; it is not a recurring import or a
-cross-PC sync. The Admin password is sent only to the loopback API and stored
-in PostgreSQL as a bcrypt hash. Admins can create Cashier accounts; the
+The shop database starts without sample products. The app applies pending
+versioned migrations safely and creates the initial Admin account without
+inserting demo data. The Admin password is sent only to the loopback API and
+stored in PostgreSQL as a bcrypt hash. Admins can create Cashier accounts; the
 application roles are Admin and Cashier.
+
+Developers can explicitly seed a development or test database with 55 sample
+grocery products, each with separate Old Stock and New Stock batches. Apply
+migrations first, configure the backend database environment, then run this
+from the `backend` directory:
+
+```powershell
+$env:ENABLE_DEMO_DATA = 'YES'
+npm run db:seed-demo
+Remove-Item Env:ENABLE_DEMO_DATA
+```
+
+The command refuses to run when `NODE_ENV=production`, requires the explicit
+environment opt-in, and skips products already present. Never run it against a
+client's production database. It does not overwrite products or invoices.
 
 The application starts the local PostgreSQL process and bundled API
 automatically. PostgreSQL stays running between app launches so the next startup
@@ -278,39 +290,67 @@ a product archives it from the active list without deleting its database row.
 Cashiers can search and view active products but do not see management actions;
 the API also enforces this role restriction. Purchase prices are only returned
 to Admins. Admins can save the product list as a genuine `.xlsx` workbook using
-the Windows save dialog; the export includes product name, code, category, unit,
-purchase price, and selling price, and does not change database data.
+the Windows save dialog; the export includes product name, code, category, configured quantity and unit,
+purchase price, selling price, opening stock quantity, and stock unit, and does
+not change database data.
 
-Products require a name, category, unit (`kg`, `g`,
-`litre`, `ml`, `piece`, or `packet`), purchase and selling prices. Names,
-SKU/barcodes, categories, prices, units, and legacy GST data are validated by
-the API. GST is configured
-centrally in Admin **GST settings**; product-level GST is not shown or exported.
-SKU/barcode is optional; when provided, it remains case-insensitively unique.
-Selling price must be greater than zero and purchase price must be non-negative.
-Legacy product GST values are retained only for compatibility and do not affect
-checkout. Admins can edit a product's
-selling price from its row without reopening the full product form.
-SKU/barcode uniqueness is case-insensitive. Stock quantities,
-low-stock thresholds, stock controls, and inventory reports have been removed
-from the app. Existing stock data is retained in older databases but is no
-longer checked or changed during sales.
+Products require a name, selling unit (`g`, `kg`, `ml`, `litre`, `packet`, or
+`piece`), configured quantity, and selling price for that quantity. For example,
+₹8 for 100 g is prorated when a cashier sells a different weight. Existing
+products retain their previous per-unit pricing through a default configured
+quantity of one. Product edits preserve existing code, category, and GST
+values, and expose purchase price separately from selling price. GST is configured centrally in Admin
+**GST settings**; product-level GST does not affect checkout. Admins can edit a
+product's configured quantity and selling price in its row.
+SKU/barcode uniqueness is case-insensitive. New products can also be saved
+with an opening stock quantity and purchase price.
+
+## Stock management
+
+Admins open **Stocks** from the main navigation and use its **Old Stock** and
+**New Stock** tabs. Old Stock shows the opening quantity still available,
+opening purchase price, and total quantity. The Admin can update opening
+quantity and price without erasing previously sold quantities. New Stock
+records each purchase separately with its quantity, purchase price, and date;
+the purchase batch remains visible after partial or full depletion.
+
+The product's unit (`kg`, `g`, `litre`, `ml`, `packet`, or `piece`) is the stock
+unit. Weight and volume quantities are stored in that unit, including
+proportional sales such as 250 g from a product stocked in grams. The product
+Excel export keeps its existing columns and appends opening/old stock quantity,
+stock unit, and configured selling quantity. The bundled sample-catalogue
+reader accepts the optional opening quantity and stock unit columns; no general
+Excel import screen is added.
+
+Migration `014_stock_batches.sql` safely records each existing product's
+current stock as an opening batch and keeps existing invoices and inventory
+movements. New purchases increase total stock without merging into opening
+stock. Completed bills consume the oldest available batch first and write
+batch-linked inventory movements in the same database transaction as the
+invoice. Insufficient stock rejects checkout, and voiding a bill restores the
+quantities to the batches consumed by that bill. Stock unit changes are blocked
+after any batch has been recorded so historical quantities cannot silently
+change meaning. Only Admins can view or manage stock and purchase costs.
 
 ## Billing and cart
 
 Admins and Cashiers can open **New bill** from their home screen. Search active
-products by name, SKU, or barcode, add them to the cart, enter the amount per
-unit, adjust quantities, or remove and clear items. All supported units,
-including piece and packet, support quantities up to three decimal places. The UI
+products by name, SKU, or barcode, add them to the cart, enter the price for the
+configured product quantity, then choose the amount being sold. The app
+calculates proportional amounts for weight and volume; piece and packet
+quantities are also supported to three decimal places. The UI
 calculates each line total and the total amounts with and without GST. Choose
 Cash, UPI, Card, or Split payment. Split allocations must be positive and add
 up exactly to the server-calculated invoice total before a bill can be saved.
 
-Saving a bill sends the item IDs, quantities, and entered amounts to
+Saving a bill sends the item IDs, physical quantities, and configured-quantity
+prices to
 `POST /invoices`. The API validates each amount and calculates GST using the
-saved shop settings. It writes the invoice and its item
-snapshots in one transaction. Unit prices, product names, SKUs, and units are stored as
-invoice-time snapshots. Invoice numbers are allocated from a PostgreSQL
+saved shop settings. It checks available stock, consumes batches in FIFO order,
+and writes the invoice, item snapshots, inventory movements, and remaining
+quantities in one transaction. It writes the invoice and its item
+snapshots in one transaction. Proportional unit prices, product names, SKUs, and
+units are stored as invoice-time snapshots. Invoice numbers are allocated from a PostgreSQL
 sequence, so concurrent checkouts receive unique sequential numbers. The app
 uses a UUID idempotency key and reuses it when retrying an uncertain request;
 the server returns the already-saved invoice rather than duplicating a sale.

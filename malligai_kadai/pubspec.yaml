@@ -71,6 +71,7 @@ flutter:
     - assets/thanigai_stores_logo.png
     - assets/thanigai_stores_mark.png
     - assets/thanigai_stores_receipt_logo.png
+    - assets/thanigai_stores_receipt_logo_transparent.png
     - assets/sample_products.xlsx
 
   # To add assets to your application, add an assets section, like this:

@@ -50,12 +50,28 @@ class SampleProductImporter {
       'Market Selling Price (₹)',
       'GST Rate (%)',
     ];
+    if (headers.length < requiredHeaders.length) {
+      throw const FormatException(
+        'The Products sheet columns do not match the supported sample format.',
+      );
+    }
     for (var index = 0; index < requiredHeaders.length; index += 1) {
       if (headers[index] != requiredHeaders[index]) {
         throw const FormatException(
           'The Products sheet columns do not match the supported sample format.',
         );
       }
+    }
+    if (headers[8].isNotEmpty &&
+        headers[8] != 'Opening/Old Stock Quantity') {
+      throw const FormatException(
+        'The Products sheet columns do not match the supported sample format.',
+      );
+    }
+    if (headers[9].isNotEmpty && headers[9] != 'Stock Unit') {
+      throw const FormatException(
+        'The Products sheet columns do not match the supported sample format.',
+      );
     }
 
     final products = <ProductDraft>[];
@@ -64,7 +80,7 @@ class SampleProductImporter {
       if (values.every((value) => value.trim().isEmpty)) continue;
       final category = values[0].trim();
       final name = values[2].trim();
-      final unit = values[4].trim().toLowerCase();
+      var unit = values[4].trim().toLowerCase();
       final purchasePrice = _price(
         values[5],
         'purchase price',
@@ -82,6 +98,15 @@ class SampleProductImporter {
           'Unsupported unit "$unit" on row ${row.getAttribute('r')}.',
         );
       }
+      final stockUnit = values[9].trim().toLowerCase();
+      if (stockUnit.isNotEmpty) {
+        if (!productUnits.contains(stockUnit)) {
+          throw FormatException(
+            'Unsupported stock unit "$stockUnit" on row ${row.getAttribute('r')}.',
+          );
+        }
+        unit = stockUnit;
+      }
 
       products.add(
         ProductDraft(
@@ -91,6 +116,9 @@ class SampleProductImporter {
           unit: unit,
           purchasePrice: purchasePrice,
           sellingPrice: sellingPrice,
+          openingStockQuantity: values[8].trim().isEmpty
+              ? '0.000'
+              : _quantity(values[8], row.getAttribute('r')),
           gstRate: gstRate,
         ),
       );
@@ -145,7 +173,7 @@ class SampleProductImporter {
   }
 
   static List<String> _rowValues(XmlElement row, List<String> sharedStrings) {
-    final values = List<String>.filled(8, '');
+    final values = List<String>.filled(10, '');
     for (final cell in row.findElements('c')) {
       final reference = cell.getAttribute('r');
       if (reference == null) continue;
@@ -221,7 +249,24 @@ class SampleProductImporter {
         'Unsupported GST rate "$normalized" in the Excel sheet.',
       );
     }
+
     return double.parse(normalized).toStringAsFixed(2);
+  }
+
+  static String _quantity(String value, String? rowNumber) {
+    final normalized = value.trim();
+    if (!RegExp(r'^\d+(?:\.\d{0,3})?$').hasMatch(normalized)) {
+      throw FormatException(
+        'Invalid opening stock quantity "$normalized" on row $rowNumber.',
+      );
+    }
+    final quantity = double.tryParse(normalized);
+    if (quantity == null || quantity < 0 || quantity > 999999999.999) {
+      throw FormatException(
+        'Invalid opening stock quantity "$normalized" on row $rowNumber.',
+      );
+    }
+    return quantity.toStringAsFixed(3);
   }
 
   static String _productCode(String name) {

@@ -125,7 +125,7 @@ class ReceiptFormatter {
       for (final item in invoice.items) {
         final names = _wrap(item.productName, itemWidth);
         final details = _wrap(
-          '${item.quantity} ${item.unit} x ₹${item.unitPrice}',
+          '${item.quantity} ${item.unit} x ${_formatUnitPrice(item.unitPrice)}',
           detailsWidth,
         );
         final amounts = _wrap('₹${item.lineTotal}', amountWidth);
@@ -151,14 +151,14 @@ class ReceiptFormatter {
       pair('Date', _formatDate(invoice.createdAt));
       pair('Cashier', invoice.cashierName);
       divider();
-      final quantityWidth = columns == 30 ? 3 : 5;
+      final quantityWidth = columns == 30 ? 6 : 8;
       final priceWidth = columns == 30 ? 7 : 9;
       final amountWidth = columns == 30 ? 7 : 9;
       final itemWidth = columns - quantityWidth - priceWidth - amountWidth - 3;
       final widths = [itemWidth, quantityWidth, priceWidth, amountWidth];
       _appendTableRow(
         lines,
-        ['Item', 'Qty', 'Price', 'Total'],
+        ['Item', columns == 30 ? 'Q/Unit' : 'Qty/Unit', 'Price', 'Total'],
         widths,
         rightAligned: const [false, true, true, true],
       );
@@ -168,8 +168,10 @@ class ReceiptFormatter {
           lines,
           [
             item.productName,
-            _displayQuantity(item.quantity),
-            _formatMoney(item.unitPrice),
+            item.unit.isEmpty
+                ? _displayQuantity(item.quantity)
+                : '${_displayQuantity(item.quantity)} ${item.unit}',
+            _formatUnitPrice(item.unitPrice),
             _formatMoney(item.lineTotal),
           ],
           widths,
@@ -272,8 +274,21 @@ class ReceiptFormatter {
     if (match == null) {
       throw FormatException('Invalid currency amount in receipt.', value);
     }
+
     return '₹${match.group(1)}${match.group(2)}.'
         '${(match.group(3) ?? '').padRight(2, '0')}';
+  }
+
+  static String _formatUnitPrice(String value) {
+    final match = RegExp(r'^(-?)(\d+)(?:\.(\d{1,6}))?$').firstMatch(value);
+    if (match == null) {
+      throw FormatException('Invalid unit price in receipt.', value);
+    }
+    var fraction = (match.group(3) ?? '').padRight(2, '0');
+    while (fraction.length > 2 && fraction.endsWith('0')) {
+      fraction = fraction.substring(0, fraction.length - 1);
+    }
+    return '₹${match.group(1)}${match.group(2)}.$fraction';
   }
 
   static int _toCents(String value) =>

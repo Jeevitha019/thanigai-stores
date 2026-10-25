@@ -57,6 +57,8 @@ before(async () => {
     '010_custom_product_gst_rates.sql',
     '011_shop_gst_rate.sql',
     '012_void_invoices.sql',
+    '013_product_selling_quantities.sql',
+    '014_stock_batches.sql',
   ]) {
     await testPool.query(
       await readFile(
@@ -192,7 +194,7 @@ it(
     equal(sales.invoices[0].gstEnabled, false);
     equal(sales.invoices[0].items[0].productName, 'Low report rice');
     equal(sales.invoices[0].items[0].unit, 'kg');
-    equal(sales.invoices[0].items[0].unitPrice, '300.00');
+    equal(sales.invoices[0].items[0].unitPrice, '300.000000');
     equal(sales.invoices[0].discountAmount, '0.00');
     equal(typeof sales.invoices[0].paymentMethods[0].amount, 'string');
     equal(sales.invoices[0].paymentMethods[0].amount, '100.00');
@@ -200,10 +202,21 @@ it(
     const dashboard = await reports.dashboard('2026-10-19');
     equal(dashboard.totalSales, '1399.00');
     equal(dashboard.invoiceCount, 3);
+    equal(dashboard.stockProductCount, 2);
     equal(
       dashboard.paymentSummary.find((row) => row.method === 'unrecorded')
         ?.invoiceCount,
       1,
+    );
+    await testPool!.query(
+      "UPDATE products SET stock_quantity = 0 WHERE sku = 'REPORT-RICE-LOW'",
+    );
+    equal(
+      (await reports.dashboard('2026-10-19')).stockProductCount,
+      1,
+    );
+    await testPool!.query(
+      "UPDATE products SET stock_quantity = 1 WHERE sku = 'REPORT-RICE-LOW'",
     );
     equal((await reports.auditLog(10))[0].action, 'test.event');
   },
@@ -237,6 +250,7 @@ it(
     const dashboard = await reports.dashboard('2026-10-19');
     equal(dashboard.invoiceCount, 2);
     equal(dashboard.totalSales, '1299.00');
+    equal(dashboard.stockProductCount, 2);
 
     const retained = await testPool!.query(
       `SELECT

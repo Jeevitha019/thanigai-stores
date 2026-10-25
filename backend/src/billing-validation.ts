@@ -182,6 +182,39 @@ export function lineTotalCents(unitPrice: string, quantity: string): bigint {
   return (product + 500n) / 1000n;
 }
 
+export function configuredLineTotalCents(
+  unitPrice: string,
+  quantity: string,
+  sellingQuantity: string,
+): bigint {
+  const configuredMilli = quantityToMilli(sellingQuantity);
+  if (configuredMilli <= 0n) {
+    throw new RangeError('Configured selling quantity must be positive.');
+  }
+  const amount = priceToCents(unitPrice) * quantityToMilli(quantity);
+  return (amount + configuredMilli / 2n) / configuredMilli;
+}
+
+export function unitPriceMicros(
+  unitPrice: string,
+  sellingQuantity: string,
+): bigint {
+  const configuredMilli = quantityToMilli(sellingQuantity);
+  if (configuredMilli <= 0n) {
+    throw new RangeError('Configured selling quantity must be positive.');
+  }
+  return (
+    priceToCents(unitPrice) * 10_000_000n +
+    configuredMilli / 2n
+  ) / configuredMilli;
+}
+
+export function microsToUnitPrice(micros: bigint): string {
+  return `${micros / 1_000_000n}.${(micros % 1_000_000n)
+    .toString()
+    .padStart(6, '0')}`;
+}
+
 export interface ItemTaxBreakdown {
   lineTotalCents: bigint;
   taxableCents: bigint;

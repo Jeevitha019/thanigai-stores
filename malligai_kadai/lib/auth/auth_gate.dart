@@ -7,7 +7,6 @@ import 'first_run_setup_screen.dart';
 import 'home_screens.dart';
 import 'local_backend_supervisor.dart';
 import 'login_screen.dart';
-import '../products/sample_product_importer.dart';
 
 class AuthGate extends StatefulWidget {
   const AuthGate({
@@ -279,11 +278,10 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
           'The initial setup authorization could not be loaded. Restart the app and try again.',
         );
       }
-      final sampleProducts = await SampleProductImporter.loadBundledProducts();
       await InitialAdminSetupApi(
         setupToken: setupToken,
         baseUrl: _apiBaseUrl,
-      ).createInitialAdmin(username, password, sampleProducts);
+      ).createInitialAdmin(username, password);
       _needsInitialAdmin = false;
       if (mounted) setState(() => _isWorking = false);
       await _restoreSession();

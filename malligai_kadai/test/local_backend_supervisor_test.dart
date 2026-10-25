@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:malligai_kadai/auth/local_backend_supervisor.dart';
-import 'package:malligai_kadai/products/sample_product_importer.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -214,8 +213,6 @@ void main() {
 
   test('sends the setup token only with initial Admin creation', () async {
     const setupToken = 'one-time-setup-token';
-    final sampleProducts = await SampleProductImporter.loadBundledProducts();
-    expect(sampleProducts, hasLength(88));
     var receivedToken = '';
     final client = MockClient((request) async {
       expect(request.url.port, 31337);
@@ -227,13 +224,7 @@ void main() {
       expect(request.method, 'POST');
       expect(request.url.path, '/setup/admin');
       final body = jsonDecode(request.body) as Map<String, dynamic>;
-      expect(body, {
-        'username': 'admin',
-        'password': 'admin-password',
-        'sampleProducts': sampleProducts
-            .map((product) => product.toJson())
-            .toList(growable: false),
-      });
+      expect(body, {'username': 'admin', 'password': 'admin-password'});
       expect(utf8.encode(request.body).length, lessThanOrEqualTo(32 * 1024));
       return http.Response('{}', 201);
     });
@@ -242,7 +233,7 @@ void main() {
       setupToken: setupToken,
       baseUrl: 'http://127.0.0.1:31337',
       client: client,
-    ).createInitialAdmin('admin', 'admin-password', sampleProducts);
+    ).createInitialAdmin('admin', 'admin-password');
 
     expect(receivedToken, setupToken);
   });
