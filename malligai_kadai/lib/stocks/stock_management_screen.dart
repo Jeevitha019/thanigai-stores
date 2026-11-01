@@ -51,17 +51,20 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
       if (!mounted) return;
       for (final product in products) {
         _openingQuantities
-            .putIfAbsent(
-              product.productId,
-              () => TextEditingController(text: product.openingQuantity),
-            )
-            .text = product.openingQuantity;
+                .putIfAbsent(
+                  product.productId,
+                  () => TextEditingController(text: product.openingQuantity),
+                )
+                .text =
+            product.openingQuantity;
         _purchasePrices
-            .putIfAbsent(
-              product.productId,
-              () => TextEditingController(text: product.openingPurchasePrice),
-            )
-            .text = product.openingPurchasePrice;
+                .putIfAbsent(
+                  product.productId,
+                  () =>
+                      TextEditingController(text: product.openingPurchasePrice),
+                )
+                .text =
+            product.openingPurchasePrice;
       }
       setState(() {
         _products = products;
@@ -128,7 +131,7 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
   Future<void> _recordPurchase(StockProduct product) async {
     final purchase = await showDialog<_PurchaseDraft>(
       context: context,
-      builder: (_) => _NewPurchaseDialog(unit: product.unit),
+      builder: (_) => const _NewPurchaseDialog(),
     );
     if (purchase == null || !mounted) return;
     setState(() => _savingProductId = product.productId);
@@ -204,12 +207,7 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
                   ),
                 ),
               )
-            : TabBarView(
-                children: [
-                  _buildOldStock(),
-                  _buildNewStock(),
-                ],
-              ),
+            : TabBarView(children: [_buildOldStock(), _buildNewStock()]),
       ),
     );
   }
@@ -232,13 +230,12 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
               children: [
                 Text(
                   product.name,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Old stock remaining: ${product.openingRemainingQuantity} ${product.unit}   •   Total stock: ${product.totalQuantity} ${product.unit}',
+                  'Old stock remaining: ${product.openingRemainingQuantity}   •   Available stock: ${product.totalQuantity}',
                 ),
                 const SizedBox(height: 14),
                 Wrap(
@@ -251,13 +248,14 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
                       child: TextField(
                         key: Key('openingQuantity_${product.productId}'),
                         controller: _openingQuantities[product.productId],
-                        enabled: widget.canManage &&
+                        enabled:
+                            widget.canManage &&
                             _savingProductId != product.productId,
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
                         ),
                         decoration: InputDecoration(
-                          labelText: 'Old quantity (${product.unit})',
+                          labelText: 'Old quantity',
                           border: const OutlineInputBorder(),
                         ),
                       ),
@@ -267,7 +265,8 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
                       child: TextField(
                         key: Key('openingPurchasePrice_${product.productId}'),
                         controller: _purchasePrices[product.productId],
-                        enabled: widget.canManage &&
+                        enabled:
+                            widget.canManage &&
                             _savingProductId != product.productId,
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
@@ -341,7 +340,7 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Text('Total stock: ${product.totalQuantity} ${product.unit}'),
+                Text('Available stock: ${product.totalQuantity}'),
                 const Divider(height: 24),
                 if (product.purchases.isEmpty)
                   const Text('No new purchases recorded.')
@@ -353,14 +352,12 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
                         children: [
                           Expanded(
                             child: Text(
-                              '${batch.purchaseDate}  •  ${batch.quantity} ${product.unit}  •  ₹${batch.purchasePrice}',
+                              '${batch.purchaseDate}  •  ${batch.quantity}  •  ₹${batch.purchasePrice}',
                             ),
                           ),
                           Text(
-                            'Remaining ${batch.remainingQuantity} ${product.unit}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                            ),
+                            'Remaining ${batch.remainingQuantity}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                         ],
                       ),
@@ -387,10 +384,7 @@ class _PurchaseDraft {
 }
 
 class _NewPurchaseDialog extends StatefulWidget {
-  const _NewPurchaseDialog({required this.unit});
-
-  final String unit;
-
+  const _NewPurchaseDialog();
   @override
   State<_NewPurchaseDialog> createState() => _NewPurchaseDialogState();
 }
@@ -426,7 +420,7 @@ class _NewPurchaseDialogState extends State<_NewPurchaseDialog> {
                   decimal: true,
                 ),
                 decoration: InputDecoration(
-                  labelText: 'Quantity (${widget.unit})',
+                  labelText: 'Quantity',
                   border: const OutlineInputBorder(),
                 ),
                 validator: (value) =>
@@ -505,7 +499,9 @@ String? _decimalError(
   }
   final parsed = double.tryParse(normalized);
   if (parsed == null || parsed < 0 || (!allowZero && parsed == 0)) {
-    return allowZero ? 'Enter a non-negative number.' : 'Enter a value above zero.';
+    return allowZero
+        ? 'Enter a non-negative number.'
+        : 'Enter a value above zero.';
   }
   return null;
 }

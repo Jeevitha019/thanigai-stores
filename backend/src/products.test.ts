@@ -292,6 +292,20 @@ describe('product API', () => {
       .expect(409);
   });
 
+  it('validates and stores an optional MRP', async () => {
+    const created = await request(app)
+      .post('/products')
+      .set('Authorization', 'Bearer ' + adminToken)
+      .send({ ...validProduct, sku: 'MRP-001', mrp: '125.50' })
+      .expect(201);
+    equal(created.body.product.mrp, '125.50');
+    await request(app)
+      .post('/products')
+      .set('Authorization', 'Bearer ' + adminToken)
+      .send({ ...validProduct, sku: 'MRP-002', mrp: '-1' })
+      .expect(400);
+  });
+
   it('validates and persists opening stock on product creation', async () => {
     const created = await request(app)
       .post('/products')

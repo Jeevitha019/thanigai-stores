@@ -23,6 +23,7 @@ class ProductItem {
     required this.unit,
     this.purchasePrice,
     required this.sellingPrice,
+    this.mrp,
     this.sellingQuantity = '1.000',
     this.openingStockQuantity = '0.000',
     this.stockQuantity = '0.000',
@@ -36,6 +37,7 @@ class ProductItem {
   final String unit;
   final String? purchasePrice;
   final String sellingPrice;
+  final String? mrp;
   final String sellingQuantity;
   final String openingStockQuantity;
   final String stockQuantity;
@@ -64,6 +66,7 @@ class ProductItem {
           ? null
           : text('purchasePrice'),
       sellingPrice: text('sellingPrice'),
+      mrp: json['mrp'] == null ? null : text('mrp'),
       sellingQuantity: json['sellingQuantity'] == null
           ? '1.000'
           : text('sellingQuantity'),
@@ -86,6 +89,7 @@ class ProductDraft {
     required this.unit,
     required this.purchasePrice,
     required this.sellingPrice,
+    this.mrp,
     this.sellingQuantity = '1.000',
     this.openingStockQuantity = '0.000',
     required this.gstRate,
@@ -97,6 +101,7 @@ class ProductDraft {
   final String unit;
   final String purchasePrice;
   final String sellingPrice;
+  final String? mrp;
   final String sellingQuantity;
   final String openingStockQuantity;
   final String gstRate;
@@ -108,6 +113,7 @@ class ProductDraft {
     'unit': unit,
     'purchasePrice': purchasePrice.trim(),
     'sellingPrice': sellingPrice.trim(),
+    'mrp': mrp?.trim().isEmpty == true ? null : mrp?.trim(),
     'sellingQuantity': sellingQuantity.trim(),
     'openingStockQuantity': openingStockQuantity.trim(),
     'gstRate': gstRate.trim(),
@@ -181,7 +187,9 @@ class StockProduct {
     String text(String key) {
       final value = json[key];
       if (value == null || value is Map || value is List) {
-        throw const ProductFailure('The API returned an invalid stock product.');
+        throw const ProductFailure(
+          'The API returned an invalid stock product.',
+        );
       }
       return value.toString();
     }
@@ -377,69 +385,69 @@ class HttpProductGateway implements ProductGateway, StockGateway {
   }
 
   @override
-    Future<List<StockProduct>> loadStocks() async {
-      final response = await _authorized(
-        (token) => _httpClient.get(
-          _baseUri.resolve('/stocks'),
-          headers: {'Authorization': 'Bearer $token'},
-        ),
-      );
-      final body = _decode(response);
-      _checkStatus(response, body, 200);
-      final products = body['products'];
-      if (products is! List) {
-        throw const ProductFailure('The API returned an invalid stock list.');
-      }
-      return products.map(StockProduct.fromJson).toList(growable: false);
+  Future<List<StockProduct>> loadStocks() async {
+    final response = await _authorized(
+      (token) => _httpClient.get(
+        _baseUri.resolve('/stocks'),
+        headers: {'Authorization': 'Bearer $token'},
+      ),
+    );
+    final body = _decode(response);
+    _checkStatus(response, body, 200);
+    final products = body['products'];
+    if (products is! List) {
+      throw const ProductFailure('The API returned an invalid stock list.');
     }
+    return products.map(StockProduct.fromJson).toList(growable: false);
+  }
 
-    @override
-    Future<StockProduct> updateOpeningStock(
-      String productId,
-      String quantity,
-      String purchasePrice,
-    ) async {
-      final response = await _authorized(
-        (token) => _httpClient.put(
-          _baseUri.resolve('/stocks/$productId/opening'),
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode({
-            'quantity': quantity,
-            'purchasePrice': purchasePrice,
-          }),
-        ),
-      );
-      final body = _decode(response);
-      _checkStatus(response, body, 200);
-      return StockProduct.fromJson(body['product']);
-    }
+  @override
+  Future<StockProduct> updateOpeningStock(
+    String productId,
+    String quantity,
+    String purchasePrice,
+  ) async {
+    final response = await _authorized(
+      (token) => _httpClient.put(
+        _baseUri.resolve('/stocks/$productId/opening'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'quantity': quantity,
+          'purchasePrice': purchasePrice,
+        }),
+      ),
+    );
+    final body = _decode(response);
+    _checkStatus(response, body, 200);
+    return StockProduct.fromJson(body['product']);
+  }
 
-    @override
-    Future<StockProduct> receiveStockPurchase(
-      String productId,
-      String quantity,
-      String purchasePrice,
-      String purchaseDate,
-    ) async {
-      final response = await _authorized(
-        (token) => _httpClient.post(
-          _baseUri.resolve('/stocks/$productId/purchases'),
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode({
-            'quantity': quantity,
-            'purchasePrice': purchasePrice,
-            'purchaseDate': purchaseDate,
-          }),
-        ),
-      );
-      final body = _decode(response);
-      _checkStatus(response, body, 201);
-      return StockProduct.fromJson(body['product']);
-    }
+  @override
+  Future<StockProduct> receiveStockPurchase(
+    String productId,
+    String quantity,
+    String purchasePrice,
+    String purchaseDate,
+  ) async {
+    final response = await _authorized(
+      (token) => _httpClient.post(
+        _baseUri.resolve('/stocks/$productId/purchases'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'quantity': quantity,
+          'purchasePrice': purchasePrice,
+          'purchaseDate': purchaseDate,
+        }),
+      ),
+    );
+    final body = _decode(response);
+    _checkStatus(response, body, 201);
+    return StockProduct.fromJson(body['product']);
+  }
 }

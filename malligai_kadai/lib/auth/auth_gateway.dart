@@ -91,7 +91,7 @@ class HttpAuthGateway implements AuthGateway, StockGateway {
          httpClient: httpClient,
        );
 
-  static const _tokenKey = 'malligai_kadai_access_token';
+  static const _tokenKey = 'thanigai_stores_access_token';
 
   final Uri _baseUri;
   final FlutterSecureStorage _secureStorage;

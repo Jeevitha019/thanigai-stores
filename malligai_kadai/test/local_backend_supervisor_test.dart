@@ -15,8 +15,8 @@ void main() {
       const settings = LocalBackendSettings(
         host: '127.0.0.1',
         port: 55432,
-        database: 'malligai_kadai',
-        username: 'malligai_app',
+        database: 'thanigai_stores',
+        username: 'thanigai_app',
         password: 'generated-database-password',
         jwtSecret: 'generated-jwt-secret',
         initialSetupToken: 'generated-initial-setup-token',
@@ -35,6 +35,21 @@ void main() {
       expect(supervisor.prepareCalls, 1);
     },
   );
+
+  test('rejects saved database settings that target another database', () {
+    expect(
+      () => LocalBackendSettings.fromJson({
+        'host': 'localhost',
+        'port': 5432,
+        'database': 'developer_database',
+        'username': 'developer',
+        'password': 'password',
+        'jwtSecret': 'jwt-secret',
+        'initialSetupToken': 'setup-token',
+      }),
+      throwsA(isA<BackendStartFailure>()),
+    );
+  });
 
   test(
     'closing the app does not wait for or stop the local database',
@@ -74,11 +89,11 @@ void main() {
             '-NoProfile',
             '-NonInteractive',
             '-Command',
-            r'[IO.File]::WriteAllText($env:MALLIGAI_PROCESS_MARKER, "0")',
+            r'[IO.File]::WriteAllText($env:THANIGAI_PROCESS_MARKER, "0")',
           ],
           environment: {
             ...Platform.environment,
-            'MALLIGAI_PROCESS_MARKER': marker.path,
+            'THANIGAI_PROCESS_MARKER': marker.path,
           },
           runInShell: false,
           mode: ProcessStartMode.normal,
@@ -113,7 +128,7 @@ void main() {
       expect(
         isHealthyLocalApiResponse(200, {
           'status': 'ok',
-          'service': 'malligai-kadai-api',
+          'service': 'thanigai-stores-api',
           'database': 'ok',
         }),
         isTrue,
@@ -121,7 +136,7 @@ void main() {
       expect(
         isHealthyLocalApiResponse(503, {
           'status': 'error',
-          'service': 'malligai-kadai-api',
+          'service': 'thanigai-stores-api',
           'database': 'unavailable',
         }),
         isFalse,
@@ -157,24 +172,24 @@ void main() {
     }
   });
 
-  test('recognizes only the bundled Malligai backend as reusable', () {
+  test('recognizes only the bundled Thanigai backend as reusable', () {
     expect(
-      isBundledMalligaiBackendOwner(
+      isBundledThanigaiBackendOwner(
         processName: 'node.exe',
-        executablePath: r'C:\Malligai Kadai\backend\node.exe',
-        commandLine: r'"C:\Malligai Kadai\backend\node.exe" "C:\Malligai Kadai\backend\dist\server.js"',
-        expectedNodeExecutable: r'C:\Malligai Kadai\backend\node.exe',
-        expectedServerScript: r'C:\Malligai Kadai\backend\dist\server.js',
+        executablePath: r'C:\Thanigai Stores\backend\node.exe',
+        commandLine: r'"C:\Thanigai Stores\backend\node.exe" "C:\Thanigai Stores\backend\dist\server.js"',
+        expectedNodeExecutable: r'C:\Thanigai Stores\backend\node.exe',
+        expectedServerScript: r'C:\Thanigai Stores\backend\dist\server.js',
       ),
       isTrue,
     );
     expect(
-      isBundledMalligaiBackendOwner(
+      isBundledThanigaiBackendOwner(
         processName: 'node.exe',
         executablePath: r'C:\Program Files\nodejs\node.exe',
         commandLine: r'node.exe server.js',
-        expectedNodeExecutable: r'C:\Malligai Kadai\backend\node.exe',
-        expectedServerScript: r'C:\Malligai Kadai\backend\dist\server.js',
+        expectedNodeExecutable: r'C:\Thanigai Stores\backend\node.exe',
+        expectedServerScript: r'C:\Thanigai Stores\backend\dist\server.js',
       ),
       isFalse,
     );
@@ -184,20 +199,20 @@ void main() {
     final message = apiPortConflictMessage(
       processId: 18420,
       processName: 'node.exe',
-      executablePath: r'C:\Malligai Kadai\backend\node.exe',
+      executablePath: r'C:\Thanigai Stores\backend\node.exe',
     );
 
     expect(message, contains('PID 18420'));
-    expect(message, contains(r'C:\Malligai Kadai\backend\node.exe'));
+    expect(message, contains(r'C:\Thanigai Stores\backend\node.exe'));
     expect(message, contains('No process was stopped'));
   });
 
   test('persists and supplies the initial setup token to the backend', () {
     const settings = LocalBackendSettings(
-      host: 'localhost',
-      port: 5432,
-      database: 'shop',
-      username: 'shop_user',
+      host: '127.0.0.1',
+      port: 55432,
+      database: 'thanigai_stores',
+      username: 'thanigai_app',
       password: 'database-password',
       jwtSecret: 'jwt-secret',
       initialSetupToken: 'one-time-setup-token',
@@ -266,6 +281,42 @@ void main() {
     expect(
       databaseStartupFailureMessage('unknown'),
       contains('stopped before becoming ready'),
+    );
+  });
+
+  test('reads the most recent PostgreSQL setup failure from the safe log', () {
+    expect(
+      postgresManagerFailureReason([
+        '2026-10-31 16:00:00Z [starting] Failed: earlier setup failure.',
+        '2026-10-31 16:01:00Z [starting] Still retrying.',
+        '2026-10-31 16:02:00Z [starting] Failed: latest setup failure.',
+      ]),
+      'latest setup failure.',
+    );
+    expect(
+      postgresManagerFailureReason([
+        '2026-10-31 16:00:00Z [starting] manager started.',
+      ]),
+      isNull,
+    );
+  });
+
+  test('does not report a failure from an earlier PostgreSQL run', () {
+    expect(
+      postgresManagerFailureReason([
+        '2026-10-31 16:00:00Z [starting] manager_started manager_pid=184.',
+        '2026-10-31 16:00:00Z [starting] Failed: earlier setup failure.',
+        '2026-10-31 16:02:00Z [starting] manager_started manager_pid=285.',
+        '2026-10-31 16:02:00Z [starting] Failed: current setup failure.',
+      ], managerProcessId: 285),
+      'current setup failure.',
+    );
+    expect(
+      postgresManagerFailureReason([
+        '2026-10-31 16:00:00Z [starting] manager_started manager_pid=184.',
+        '2026-10-31 16:00:00Z [starting] Failed: earlier setup failure.',
+      ], managerProcessId: 285),
+      isNull,
     );
   });
 }

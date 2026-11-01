@@ -7,7 +7,7 @@ import { BackupService } from './backup';
 import { HttpError } from './auth';
 
 const backupName =
-  'malligai-kadai_20261019_120000_123e4567-e89b-12d3-a456-426614174000.dump';
+  'thanigai-stores_20261019_120000_123e4567-e89b-12d3-a456-426614174000.dump';
 const credentials: NodeJS.ProcessEnv = {
   DB_HOST: '127.0.0.1',
   DB_PORT: '5432',

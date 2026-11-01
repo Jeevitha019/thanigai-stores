@@ -12,12 +12,41 @@ import 'package:http/http.dart' as http;
 String _joinLocalPath(String first, String second) =>
     '$first${Platform.pathSeparator}$second';
 
+String? postgresManagerFailureReason(
+  Iterable<String> logLines, {
+  int? managerProcessId,
+}) {
+  const marker = '] Failed: ';
+  final lines = logLines.toList();
+  var currentRunStart = 0;
+  if (managerProcessId != null) {
+    currentRunStart = -1;
+    for (var index = lines.length - 1; index >= 0; index--) {
+      final match = RegExp(r'manager_started manager_pid=(\d+)')
+          .firstMatch(lines[index]);
+      if (match != null && int.tryParse(match.group(1)!) == managerProcessId) {
+        currentRunStart = index;
+        break;
+      }
+    }
+    if (currentRunStart < 0) return null;
+  }
+  for (final line in lines.skip(currentRunStart).toList().reversed) {
+    final markerIndex = line.indexOf(marker);
+    if (markerIndex >= 0) {
+      final reason = line.substring(markerIndex + marker.length).trim();
+      if (reason.isNotEmpty) return reason;
+    }
+  }
+  return null;
+}
+
 String _applicationDirectory() => File(Platform.resolvedExecutable).parent.path;
 
 String _perUserShopDirectory() {
   final localAppData = Platform.environment['LOCALAPPDATA'];
   if (localAppData != null && localAppData.isNotEmpty) {
-    return _joinLocalPath(localAppData, 'Malligai Kadai');
+    return _joinLocalPath(localAppData, 'Thanigai Stores');
   }
   final userProfile = Platform.environment['USERPROFILE'];
   if (userProfile == null || userProfile.isEmpty) {
@@ -25,7 +54,7 @@ String _perUserShopDirectory() {
       'The current Windows user profile could not be located.',
     );
   }
-  return _joinLocalPath(userProfile, r'AppData\Local\Malligai Kadai');
+  return _joinLocalPath(userProfile, r'AppData\Local\Thanigai Stores');
 }
 
 String _postgresToolsDirectory() {
@@ -40,7 +69,7 @@ String _postgresToolsDirectory() {
   final programData = Platform.environment['ProgramData'] ?? r'C:\ProgramData';
   final packagedRuntime = _joinLocalPath(
     programData,
-    r'Malligai Kadai\PostgreSQL\18\runtime\bin',
+    r'Thanigai Stores\PostgreSQL\18\runtime\bin',
   );
   if (File(_joinLocalPath(packagedRuntime, 'pg_dump.exe')).existsSync()) {
     return packagedRuntime;
@@ -48,7 +77,7 @@ String _postgresToolsDirectory() {
 
   final programFiles =
       Platform.environment['ProgramFiles'] ?? r'C:\Program Files';
-  return _joinLocalPath(programFiles, r'Malligai Kadai\PostgreSQL\18\bin');
+  return _joinLocalPath(programFiles, r'Thanigai Stores\PostgreSQL\18\bin');
 }
 
 typedef _GetExtendedTcpTableNative = ffi.Uint32 Function(
@@ -212,7 +241,7 @@ class LocalBackendSettings {
   Map<String, String> processEnvironment({required int apiPort}) => {
     'API_PORT': '$apiPort',
     'NODE_ENV': 'production',
-    'MALLIGAI_SUPERVISED': '1',
+    'THANIGAI_SUPERVISED': '1',
     'DB_HOST': host,
     'DB_PORT': '$port',
     'DB_NAME': database,
@@ -250,6 +279,16 @@ class LocalBackendSettings {
         'Saved local database settings are invalid. Repair the Thanigai Stores installation.',
       );
     }
+    if (value['host'] != '127.0.0.1' ||
+        value['database'] != 'thanigai_stores' ||
+        value['username'] != 'thanigai_app' ||
+        (value['port'] as num) != (value['port'] as num).toInt() ||
+        (value['port'] as num) < 55432 ||
+        (value['port'] as num) > 55462) {
+      throw const BackendStartFailure(
+        'Saved database settings do not identify the bundled Thanigai Stores database. Repair the installation.',
+      );
+    }
     return LocalBackendSettings(
       host: value['host'] as String,
       port: (value['port'] as num).toInt(),
@@ -285,10 +324,10 @@ bool isHealthyLocalApiResponse(int statusCode, Object? decodedBody) =>
     statusCode == 200 &&
     decodedBody is Map<String, dynamic> &&
     decodedBody['status'] == 'ok' &&
-    decodedBody['service'] == 'malligai-kadai-api' &&
+    decodedBody['service'] == 'thanigai-stores-api' &&
     decodedBody['database'] == 'ok';
 
-bool isBundledMalligaiBackendOwner({
+bool isBundledThanigaiBackendOwner({
   required String processName,
   required String? executablePath,
   required String? commandLine,
@@ -345,7 +384,7 @@ class LocalBackendSupervisor {
   LocalBackendSupervisor({FlutterSecureStorage? secureStorage})
     : _secureStorage = secureStorage ?? const FlutterSecureStorage();
 
-  static const _settingsKey = 'malligai_kadai_per_user_backend_settings_v2';
+  static const _settingsKey = 'thanigai_stores_per_user_backend_settings_v1';
   static const _defaultApiPort = 3000;
 
   final FlutterSecureStorage _secureStorage;
@@ -355,13 +394,15 @@ class LocalBackendSupervisor {
   String? _startupLogPath;
   LocalBackendSettings? _startupLogSettings;
   Future<void> _startupLogWrites = Future<void>.value();
-  Future<void>? _starting;
+  Future<LocalBackendSettings>? _starting;
   Future<void>? _stopping;
   Future<void>? _preparingDatabase;
   Process? _managerProcess;
   int? _managerExitCode;
   Stopwatch? _startupClock;
   bool _shutdownRequested = false;
+  LocalBackendSettings? _managerSettings;
+  LocalBackendSettings? _activeSettings;
 
   String get apiBaseUrl => 'http://127.0.0.1:$_apiPort';
 
@@ -448,6 +489,24 @@ class LocalBackendSupervisor {
     await _recordStartupDiagnostic(
       'PostgreSQL manager completed successfully.',
     );
+    final settings = await _readPerUserBootstrapSettings();
+    if (settings == null) {
+      throw BackendStartFailure(
+        'PostgreSQL setup completed without protected database settings. Review $logPath.',
+      );
+    }
+    try {
+      await _secureStorage.write(
+        key: _settingsKey,
+        value: jsonEncode(settings.toJson()),
+      );
+    } catch (_) {
+      throw const BackendStartFailure(
+        'Windows could not securely save the recovered Thanigai Stores database settings.',
+      );
+    }
+    _managerSettings = settings;
+    _startupLogSettings = settings;
   }
 
   Future<LocalBackendSettings?> readSettings() async {
@@ -465,14 +524,25 @@ class LocalBackendSupervisor {
           'Secure database settings loaded in ${readStarted.elapsedMilliseconds} ms.',
         );
         return settings;
-      } on FormatException {
-        throw const BackendStartFailure(
-          'Saved local database settings are unreadable. Repair the Thanigai Stores installation.',
+      } on FormatException catch (error) {
+        await _recordStartupDiagnostic(
+          'Secure database settings are unreadable and will be recovered from the PostgreSQL manager: ${error.message}.',
+        );
+      } on BackendStartFailure catch (error) {
+        await _recordStartupDiagnostic(
+          'Secure database settings failed validation and will be recovered from the PostgreSQL manager: ${error.message}.',
         );
       }
     }
 
-    final bootstrapSettings = await _readPerUserBootstrapSettings();
+    LocalBackendSettings? bootstrapSettings;
+    try {
+      bootstrapSettings = await _readPerUserBootstrapSettings();
+    } on BackendStartFailure catch (error) {
+      await _recordStartupDiagnostic(
+        'Protected PostgreSQL bootstrap settings could not be loaded; the manager will check recovery options: ${error.message}.',
+      );
+    }
     if (bootstrapSettings == null) {
       await _recordStartupDiagnostic(
         'No saved or protected bootstrap database settings were found (${readStarted.elapsedMilliseconds} ms).',
@@ -520,8 +590,8 @@ class LocalBackendSupervisor {
     const decryptScript = r'''
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
-$encrypted = [IO.File]::ReadAllBytes($env:MALLIGAI_BOOTSTRAP_FILE)
-$entropy = [Text.Encoding]::UTF8.GetBytes('MalligaiKadai|PerUserDatabase|v1')
+$encrypted = [IO.File]::ReadAllBytes($env:THANIGAI_BOOTSTRAP_FILE)
+$entropy = [Text.Encoding]::UTF8.GetBytes('ThanigaiStores|PerUserDatabase|v1')
 $plain = [Security.Cryptography.ProtectedData]::Unprotect(
   $encrypted,
   $entropy,
@@ -537,7 +607,7 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
         ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', decryptScript],
         environment: {
           ...Platform.environment,
-          'MALLIGAI_BOOTSTRAP_FILE': bootstrapPath,
+          'THANIGAI_BOOTSTRAP_FILE': bootstrapPath,
         },
         runInShell: false,
       );
@@ -610,9 +680,9 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
     }
   }
 
-  Future<void> startAndWait({LocalBackendSettings? settings}) {
+  Future<LocalBackendSettings> startAndWait({LocalBackendSettings? settings}) {
     if (_shutdownRequested) {
-      return Future<void>.error(
+      return Future<LocalBackendSettings>.error(
         const BackendStartFailure('Thanigai Stores is closing.'),
       );
     }
@@ -625,7 +695,9 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
     });
   }
 
-  Future<void> _startAndWait({LocalBackendSettings? settings}) async {
+  Future<LocalBackendSettings> _startAndWait({
+    LocalBackendSettings? settings,
+  }) async {
     if (_shutdownRequested) {
       throw const BackendStartFailure('Thanigai Stores is closing.');
     }
@@ -640,7 +712,14 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
         await _recordStartupDiagnostic(
           'Existing app-owned API passed the health check.',
         );
-        return;
+        final activeSettings =
+            _activeSettings ?? settings ?? await readSettings();
+        if (activeSettings == null) {
+          throw const BackendStartFailure(
+            'Local database settings are unavailable. Restart Thanigai Stores.',
+          );
+        }
+        return activeSettings;
       }
       await _stopBackendProcess(currentProcess);
     }
@@ -665,7 +744,7 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
     }
 
     final existingApiProbe = Stopwatch()..start();
-    final existingApiProcessId = await _findHealthyMalligaiBackend(settings);
+    final existingApiProcessId = await _findHealthyThanigaiBackend(settings);
     await _recordStartupDiagnostic(
       'Existing API identity/health probe completed in ${existingApiProbe.elapsedMilliseconds} ms (verified=${existingApiProcessId != null}).',
     );
@@ -677,13 +756,15 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
       await _recordStartupDiagnostic(
         'Reusing the healthy Thanigai Stores API (PID $existingApiProcessId).',
       );
-      return;
+      _activeSettings = settings;
+      return settings;
     }
     if (_shutdownRequested) {
       throw const BackendStartFailure('Thanigai Stores is closing.');
     }
     await _recordStartupDiagnostic('Starting PostgreSQL manager stage.');
     await prepareDatabase();
+    settings = _managerSettings ?? settings;
     if (_shutdownRequested) {
       throw const BackendStartFailure('Thanigai Stores is closing.');
     }
@@ -764,7 +845,8 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
               'API health check passed after ${_startupClock?.elapsedMilliseconds ?? 0} ms.',
             );
             await _flushStartupLog();
-            return;
+            _activeSettings = settings;
+            return settings;
           }
         } on SocketException {
           // The server has not started listening yet.
@@ -796,8 +878,8 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
   }
 
   void _captureStartupFailure(String line) {
-    const databasePrefix = 'MALLIGAI_DB_STARTUP_FAILURE=';
-    const apiPrefix = 'MALLIGAI_API_STARTUP_FAILURE=';
+    const databasePrefix = 'THANIGAI_DB_STARTUP_FAILURE=';
+    const apiPrefix = 'THANIGAI_API_STARTUP_FAILURE=';
     final prefix = line.startsWith(databasePrefix)
         ? databasePrefix
         : line.startsWith(apiPrefix)
@@ -1019,7 +1101,6 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
       stateDirectory,
       'database-manager-${mode.toLowerCase()}-${_randomSecret()}.result',
     );
-    final managerStarted = Stopwatch()..start();
     final managerProcess = await Process.start('powershell.exe', [
       '-NoLogo',
       '-NoProfile',
@@ -1043,8 +1124,16 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
     ], runInShell: false);
     _managerProcess = managerProcess;
     _managerExitCode = null;
-    managerProcess.stdout.listen((_) {});
-    managerProcess.stderr.listen((_) {});
+    final stdoutLines = <String>[];
+    final stderrLines = <String>[];
+    managerProcess.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen(stdoutLines.add);
+    managerProcess.stderr
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen(stderrLines.add);
     int? managerExitCode;
     unawaited(
       managerProcess.exitCode.then((exitCode) {
@@ -1060,9 +1149,9 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
       final deadline = DateTime.now().add(timeout);
       while (DateTime.now().isBefore(deadline)) {
         final resultFile = File(resultPath);
-        if (await resultFile.exists()) {
-          final result = (await resultFile.readAsString()).trim();
-          await resultFile.delete();
+        if (resultFile.existsSync()) {
+          final result = resultFile.readAsStringSync().trim();
+          resultFile.deleteSync();
           final exitCode = int.tryParse(result);
           if (exitCode == null) {
             throw BackendStartFailure(
@@ -1072,9 +1161,6 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
           final processExitCode = await managerProcess.exitCode.timeout(
             const Duration(seconds: 3),
             onTimeout: () => -1,
-          );
-          await _recordStartupDiagnostic(
-            'PostgreSQL manager completed in ${managerStarted.elapsedMilliseconds} ms with result_code=$exitCode, process_exit_code=$processExitCode.',
           );
           if (identical(_managerProcess, managerProcess)) {
             _managerProcess = null;
@@ -1088,6 +1174,14 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
               'The PostgreSQL manager did not exit after reporting completion. Review $logPath.',
             );
           }
+          if (exitCode != 0) {
+            throw await _postgresManagerFailure(
+              exitCode,
+              logPath,
+              managerProcessId: managerProcess.pid,
+              processDiagnostics: [...stdoutLines, ...stderrLines],
+            );
+          }
           if (processExitCode != 0) {
             throw BackendStartFailure(
               'The PostgreSQL manager exited with code $processExitCode. Review $logPath.',
@@ -1095,12 +1189,14 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
           }
           return exitCode;
         }
-        if (managerExitCode != null) {
-          await _recordStartupDiagnostic(
-            'PostgreSQL manager process exited in ${managerStarted.elapsedMilliseconds} ms with exit_code=$managerExitCode and no result file.',
-          );
-          throw BackendStartFailure(
-            'The PostgreSQL manager exited with code $managerExitCode without a result. Review $logPath.',
+        final completedManagerExitCode = managerExitCode;
+        if (completedManagerExitCode != null) {
+          throw await _postgresManagerFailure(
+            completedManagerExitCode,
+            logPath,
+            withoutResult: true,
+            managerProcessId: managerProcess.pid,
+            processDiagnostics: [...stdoutLines, ...stderrLines],
           );
         }
         if (_shutdownRequested) {
@@ -1129,7 +1225,87 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
     }
   }
 
-  Future<int?> _findHealthyMalligaiBackend(
+  Future<BackendStartFailure> _postgresManagerFailure(
+    int exitCode,
+    String logPath, {
+    bool withoutResult = false,
+    int? managerProcessId,
+    List<String> processDiagnostics = const [],
+  }) async {
+    final logFile = File(logPath);
+    if (!await logFile.exists()) {
+      await _recordStartupDiagnostic(
+        'PostgreSQL setup failed, but its diagnostic log was not found.',
+      );
+      return _managerFailureWithDiagnostics(
+        exitCode,
+        logPath,
+        processDiagnostics,
+      );
+    }
+    try {
+      final reason = postgresManagerFailureReason(
+        await logFile.readAsLines(),
+        managerProcessId: managerProcessId,
+      );
+      if (reason != null) {
+        return BackendStartFailure(
+          'Local PostgreSQL setup failed: $reason Review $logPath; existing shop data was not reset.',
+        );
+      }
+      await _recordStartupDiagnostic(
+        'PostgreSQL setup failed without a failure reason in its setup log.',
+      );
+    } on FileSystemException catch (error) {
+      await _recordStartupDiagnostic(
+        'Could not read PostgreSQL setup failure details: ${error.message}.',
+      );
+    }
+    final resultDescription = withoutResult ? ' without a result' : '';
+    return _managerFailureWithDiagnostics(
+      exitCode,
+      logPath,
+      processDiagnostics,
+      resultDescription: resultDescription,
+    );
+  }
+
+  BackendStartFailure _managerFailureWithDiagnostics(
+    int exitCode,
+    String logPath,
+    List<String> processDiagnostics, {
+    String resultDescription = '',
+  }) {
+    final diagnostics = processDiagnostics
+        .map(_redactDiagnostic)
+        .where((line) => line.trim().isNotEmpty)
+        .take(5)
+        .join(' ');
+    final detail = diagnostics.isEmpty ? '' : ' Details: $diagnostics';
+    return BackendStartFailure(
+      'The PostgreSQL manager exited with code $exitCode$resultDescription.$detail Review $logPath.',
+    );
+  }
+
+  String _redactDiagnostic(String value) {
+    var safe = value;
+    final settings = _startupLogSettings;
+    if (settings != null) {
+      for (final secret in [
+        settings.password,
+        settings.jwtSecret,
+        settings.initialSetupToken,
+      ]) {
+        if (secret.isNotEmpty) safe = safe.replaceAll(secret, '[REDACTED]');
+      }
+    }
+    return safe.replaceAll(
+      RegExp(r'\b[0-9a-f]{96}\b', caseSensitive: false),
+      '[REDACTED]',
+    );
+  }
+
+  Future<int?> _findHealthyThanigaiBackend(
     LocalBackendSettings settings,
   ) async {
     final healthStarted = Stopwatch()..start();
@@ -1172,7 +1348,7 @@ $plain = [Security.Cryptography.ProtectedData]::Unprotect(
       if (response.statusCode != 200) return null;
       final body = jsonDecode(response.body);
       if (body is! Map<String, dynamic> ||
-          body['service'] != 'malligai-kadai-api' ||
+          body['service'] != 'thanigai-stores-api' ||
           body['processId'] is! int) {
         return null;
       }

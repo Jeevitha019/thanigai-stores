@@ -1698,13 +1698,13 @@ class _CreateCashierDialogState extends State<_CreateCashierDialog> {
                 textCapitalization: TextCapitalization.none,
                 decoration: const InputDecoration(
                   labelText: 'Cashier username',
-                  helperText: '3–64 letters, numbers, dots, _ or -',
+                  helperText: '2–64 letters, numbers, dots, _ or -',
                   border: OutlineInputBorder(),
                 ),
                 validator: (value) {
                   if (value == null ||
-                      !RegExp(r'^[A-Za-z0-9._-]{3,64}$').hasMatch(value)) {
-                    return 'Use 3–64 letters, numbers, dots, _ or -.';
+                      !RegExp(r'^[A-Za-z0-9._-]{2,64}$').hasMatch(value)) {
+                    return 'Use 2–64 letters, numbers, dots, _ or -.';
                   }
                   return null;
                 },

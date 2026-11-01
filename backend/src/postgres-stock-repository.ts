@@ -91,12 +91,13 @@ export function createPostgresStockRepository(
       return inTransaction(getPool, async (client) => {
       const product = await client.query<{
         id: string;
+        unit: string;
         opening_stock_quantity: string;
         stock_quantity: string;
         purchase_price: string;
         created_at: Date;
       }>(
-        `SELECT id, opening_stock_quantity::text, stock_quantity::text,
+        `SELECT id, unit, opening_stock_quantity::text, stock_quantity::text,
                 purchase_price::text, created_at
          FROM products WHERE id = $1 AND is_active = TRUE FOR UPDATE`,
         [productId],
@@ -136,6 +137,7 @@ export function createPostgresStockRepository(
         await client.query(
           `UPDATE stock_batches
            SET received_quantity = $2, remaining_quantity = $3,
+               purchase_quantity = $2, purchase_unit = $5,
                purchase_price = $4, updated_at = NOW()
            WHERE id = $1`,
           [
@@ -143,19 +145,22 @@ export function createPostgresStockRepository(
             quantity,
             milliToDecimal(nextRemaining),
             purchasePrice,
+            row.unit,
           ],
         );
       } else {
         const inserted = await client.query<{ id: string }>(
           `INSERT INTO stock_batches (
              product_id, batch_type, received_quantity, remaining_quantity,
-             purchase_price, purchased_at, created_by
-           ) VALUES ($1, 'opening', $2, $3, $4, $5, $6)
+             purchase_quantity, purchase_unit, purchase_price, purchased_at,
+             created_by
+           ) VALUES ($1, 'opening', $2, $3, $2, $4, $5, $6, $7)
            RETURNING id`,
           [
             productId,
             quantity,
             milliToDecimal(nextRemaining),
+            row.unit,
             purchasePrice,
             row.created_at,
             actorId,
@@ -201,18 +206,26 @@ export function createPostgresStockRepository(
 
     async receivePurchase(productId, quantity, purchasePrice, purchaseDate, actorId) {
       return inTransaction(getPool, async (client) => {
-      const product = await client.query<{ id: string }>(
-        'SELECT id FROM products WHERE id = $1 AND is_active = TRUE FOR UPDATE',
+      const product = await client.query<{ id: string; unit: string }>(
+        'SELECT id, unit FROM products WHERE id = $1 AND is_active = TRUE FOR UPDATE',
         [productId],
       );
       if (!product.rows[0]) return null;
       const batch = await client.query<{ id: string }>(
         `INSERT INTO stock_batches (
            product_id, batch_type, received_quantity, remaining_quantity,
-           purchase_price, purchased_at, created_by
-         ) VALUES ($1, 'purchase', $2, $2, $3, $4::date, $5)
+           purchase_quantity, purchase_unit, purchase_price, purchased_at,
+           created_by
+         ) VALUES ($1, 'purchase', $2, $2, $2, $3, $4, $5::date, $6)
          RETURNING id`,
-        [productId, quantity, purchasePrice, purchaseDate, actorId],
+        [
+          productId,
+          quantity,
+          product.rows[0].unit,
+          purchasePrice,
+          purchaseDate,
+          actorId,
+        ],
       );
       const batchId = batch.rows[0]?.id;
       if (!batchId) throw new Error('Stock purchase could not be saved.');

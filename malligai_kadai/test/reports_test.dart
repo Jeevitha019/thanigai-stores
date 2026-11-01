@@ -15,7 +15,7 @@ class FakeReportsGateway implements ReportsGateway {
   int backupCreateCalls = 0;
 
   DatabaseBackup get backup => const DatabaseBackup(
-    fileName: 'malligai-kadai_20261019_120000_123e4567-e89b-12d3-a456-426614174000.dump',
+    fileName: 'thanigai-stores_20261019_120000_123e4567-e89b-12d3-a456-426614174000.dump',
     createdAt: '2026-10-19T12:00:00.000Z',
     sizeBytes: 1024,
   );

@@ -54,7 +54,7 @@ class _FakeStockGateway implements StockGateway {
     String purchasePrice,
     String purchaseDate,
   ) async {
-    this.purchaseQuantity = quantity;
+    purchaseQuantity = quantity;
     this.purchasePrice = purchasePrice;
     this.purchaseDate = purchaseDate;
     final batch = StockBatch(
@@ -95,7 +95,9 @@ void main() {
 
     expect(find.text('Old Stock'), findsOneWidget);
     expect(find.text('New Stock'), findsOneWidget);
-    expect(find.textContaining('Old stock remaining: 100.000 kg'), findsOneWidget);
+    expect(find.textContaining('Old stock remaining: 100.000'), findsOneWidget);
+    expect(find.textContaining('Available stock: 100.000'), findsOneWidget);
+    expect(find.textContaining('kg'), findsNothing);
     await tester.enterText(find.byKey(const Key('openingQuantity_1')), '120');
     await tester.enterText(
       find.byKey(const Key('openingPurchasePrice_1')),
@@ -123,6 +125,8 @@ void main() {
     expect(gateway.purchaseQuantity, '100');
     expect(gateway.purchasePrice, '60.00');
     expect(gateway.purchaseDate, matches(RegExp(r'^\d{4}-\d{2}-\d{2}$')));
-    expect(find.textContaining('100 kg  •  ₹60.00'), findsOneWidget);
+    expect(find.textContaining('100  •  ₹60.00'), findsOneWidget);
+    expect(find.text('Available stock: 220.000'), findsOneWidget);
+    expect(find.textContaining('kg'), findsNothing);
   });
 }

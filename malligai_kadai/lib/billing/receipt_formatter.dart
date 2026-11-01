@@ -52,7 +52,7 @@ class ReceiptFormatter {
     }
 
     lines.add('-' * a4Columns);
-    centered(testMode ? 'PRINTER TEST ONLY' : 'THANK YOU! VISIT US AGAIN!');
+    centered(testMode ? 'PRINTER TEST ONLY' : 'THANK YOU! VISIT US AGAIN!!');
     if (invoice.businessAddress.isNotEmpty) {
       centered(invoice.businessAddress);
     }
@@ -147,9 +147,9 @@ class ReceiptFormatter {
         }
       }
     } else {
-      pair('Bill No', invoice.invoiceNumber);
-      pair('Date', _formatDate(invoice.createdAt));
-      pair('Cashier', invoice.cashierName);
+      pair('Bill No:', '#${invoice.invoiceNumber}');
+      pair('Date:', _formatDate(invoice.createdAt, slash: true));
+      pair('Cashier:', invoice.cashierName);
       divider();
       final quantityWidth = columns == 30 ? 6 : 8;
       final priceWidth = columns == 30 ? 7 : 9;
@@ -158,7 +158,7 @@ class ReceiptFormatter {
       final widths = [itemWidth, quantityWidth, priceWidth, amountWidth];
       _appendTableRow(
         lines,
-        ['Item', columns == 30 ? 'Q/Unit' : 'Qty/Unit', 'Price', 'Total'],
+        ['Item', 'Qty', 'Price', 'Total'],
         widths,
         rightAligned: const [false, true, true, true],
       );
@@ -168,9 +168,7 @@ class ReceiptFormatter {
           lines,
           [
             item.productName,
-            item.unit.isEmpty
-                ? _displayQuantity(item.quantity)
-                : '${_displayQuantity(item.quantity)} ${item.unit}',
+            _displayQuantity(item.quantity),
             _formatUnitPrice(item.unitPrice),
             _formatMoney(item.lineTotal),
           ],
@@ -182,14 +180,27 @@ class ReceiptFormatter {
 
     divider();
     pair('Subtotal', _formatMoney(invoice.subtotal));
-    pair('Discount', _formatMoney(invoice.discountAmount));
-    pair('Amount after discount', '₹${_amountAfterDiscount(invoice)}');
-    pair(
-      'GST',
-      invoice.gstEnabled ? _formatMoney(invoice.totalTax) : 'Disabled',
-    );
+    if (a4Layout) {
+      pair('Discount', _formatMoney(invoice.discountAmount));
+      pair('Amount after discount', '₹${_amountAfterDiscount(invoice)}');
+      pair(
+        'GST',
+        invoice.gstEnabled ? _formatMoney(invoice.totalTax) : 'Disabled',
+      );
+    } else {
+      if (_toCents(invoice.discountAmount) > 0) {
+        pair('Discount', _formatMoney(invoice.discountAmount));
+      }
+      if (invoice.gstEnabled && _toCents(invoice.totalTax) > 0) {
+        pair('GST', _formatMoney(invoice.totalTax));
+      }
+    }
     divider();
-    pair('TOTAL', _formatMoney(invoice.grandTotal));
+    if (a4Layout) {
+      pair('TOTAL', _formatMoney(invoice.grandTotal));
+    } else {
+      lines.add('TOTAL  ${_formatMoney(invoice.grandTotal)}');
+    }
     pair('Total Items', _displayQuantity(_itemCount(invoice)));
     final paymentMethod = invoice.payments.isEmpty
         ? 'Not recorded'
@@ -202,7 +213,7 @@ class ReceiptFormatter {
     pair('Payment method', paymentMethod);
     if (includeFooter) {
       divider();
-      centered(testMode ? 'PRINTER TEST ONLY' : 'THANK YOU! VISIT US AGAIN!');
+      centered(testMode ? 'PRINTER TEST ONLY' : 'THANK YOU! VISIT US AGAIN!!');
       if (invoice.businessAddress.isNotEmpty) {
         centered(invoice.businessAddress);
       }
@@ -294,13 +305,14 @@ class ReceiptFormatter {
   static int _toCents(String value) =>
       ((double.tryParse(value) ?? 0) * 100).round();
 
-  static String _formatDate(String value) {
+  static String _formatDate(String value, {bool slash = false}) {
     final date = DateTime.parse(value).toLocal();
     final day = date.day.toString().padLeft(2, '0');
     final month = date.month.toString().padLeft(2, '0');
     final hour = date.hour.toString().padLeft(2, '0');
     final minute = date.minute.toString().padLeft(2, '0');
-    return '$day-$month-${date.year} $hour:$minute';
+    final separator = slash ? '/' : '-';
+    return '$day$separator$month$separator${date.year} $hour:$minute';
   }
 
   static List<String> _wrap(String value, int width) {

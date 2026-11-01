@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:malligai_kadai/products/product_gateway.dart';
@@ -70,11 +68,64 @@ void main() {
         ),
       );
 
-    final products = SampleProductImporter.parse(ZipEncoder().encode(workbook)!);
+    final products = SampleProductImporter.parse(ZipEncoder().encode(workbook));
 
     expect(products, hasLength(1));
     expect(products.single.unit, 'kg');
     expect(products.single.openingStockQuantity, '100.000');
     expect(products.single.purchasePrice, '50');
+  });
+
+  test('imports standard product columns including optional MRP and stock', () {
+    String cell(String column, String value) =>
+        '<c r="$column" t="inlineStr"><is><t>$value</t></is></c>';
+    final workbook = Archive()
+      ..addFile(
+        ArchiveFile.string(
+          'xl/worksheets/sheet1.xml',
+          '''<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+<row r="1">${cell('A', 'Product Name')}${cell('B', 'Category')}${cell('C', 'Unit')}${cell('D', 'Purchase Price')}${cell('E', 'Selling Price')}${cell('F', 'MRP')}${cell('G', 'Stock Quantity')}${cell('H', 'Product Code')}</row>
+<row r="2">${cell('A', 'Rice')}${cell('B', 'Grains')}${cell('C', 'kg')}${cell('D', '42.50')}${cell('E', '55.00')}${cell('F', '60.00')}${cell('G', '100')}${cell('H', 'RICE-001')}</row>
+</sheetData></worksheet>''',
+        ),
+      );
+
+    final products = SampleProductImporter.parse(ZipEncoder().encode(workbook));
+
+    expect(products, hasLength(1));
+    expect(products.single.name, 'Rice');
+    expect(products.single.category, 'Grains');
+    expect(products.single.unit, 'kg');
+    expect(products.single.purchasePrice, '42.50');
+    expect(products.single.sellingPrice, '55.00');
+    expect(products.single.mrp, '60.00');
+    expect(products.single.openingStockQuantity, '100.000');
+    expect(products.single.sku, 'RICE-001');
+  });
+
+  test('imports the legacy price workbook fields', () {
+    String cell(String column, String value) =>
+        '<c r="$column" t="inlineStr"><is><t>$value</t></is></c>';
+    final workbook = Archive()
+      ..addFile(
+        ArchiveFile.string(
+          'xl/worksheets/sheet1.xml',
+          '''<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>
+<row r="1">${cell('A', 'Product Name')}${cell('B', 'per')}${cell('C', 'Qty')}${cell('D', 'price')}${cell('E', 'Sales')}${cell('F', 'mrp')}</row>
+<row r="2">${cell('A', 'Powder soap')}${cell('B', '60pcs')}${cell('C', '1Box(60pcs)')}${cell('D', '540 = 9')}${cell('E', '10')}${cell('F', '10rs')}</row>
+</sheetData></worksheet>''',
+        ),
+      );
+
+    final product = SampleProductImporter.parse(ZipEncoder().encode(workbook))
+        .single;
+
+    expect(product.category, 'General');
+    expect(product.unit, 'piece');
+    expect(product.purchasePrice, '9');
+    expect(product.sellingPrice, '10');
+    expect(product.sellingQuantity, '60.000');
+    expect(product.mrp, '10');
+    expect(product.openingStockQuantity, '60.000');
   });
 }

@@ -178,7 +178,7 @@ class WindowsAppInstanceLock {
         .lookupFunction<_CloseHandleNative, _CloseHandleDart>('CloseHandle');
     final username = Platform.environment['USERNAME'] ?? 'current-user';
     final domain = Platform.environment['USERDOMAIN'] ?? 'local';
-    final name = 'Global\\MalligaiKadai.Desktop.$domain.$username'
+    final name = 'Global\\ThanigaiStores.Desktop.$domain.$username'
         .toNativeUtf16();
     try {
       setLastError(0);

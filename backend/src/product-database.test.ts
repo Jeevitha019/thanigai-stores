@@ -25,6 +25,7 @@ const input: ProductInput = {
   unit: 'piece',
   purchasePrice: '1.25',
   sellingPrice: '2.50',
+  mrp: '3.50',
   sellingQuantity: '1.000',
   gstRate: '5.00',
 };
@@ -36,6 +37,7 @@ before(async () => {
       '007_optional_product_codes_stock_settings.sql',
       '013_product_selling_quantities.sql',
       '014_stock_batches.sql',
+      '017_product_mrp.sql',
     ]) {
       const migration = await readFile(
         path.resolve(__dirname, `../migrations/${file}`),
@@ -87,6 +89,7 @@ it(
     createdId = created.id;
     equal(created.sku, sku);
     equal(created.purchasePrice, '1.25');
+    equal(created.mrp, '3.50');
     equal(created.sellingQuantity, '1.000');
     ok(created.createdAt);
 

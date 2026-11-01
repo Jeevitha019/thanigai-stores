@@ -125,21 +125,30 @@ export async function seedDemoStockData(
       const opening = await client.query<{ id: string }>(
         `INSERT INTO stock_batches (
            product_id, batch_type, received_quantity, remaining_quantity,
-           purchase_price, purchased_at, created_by
-         ) VALUES ($1, 'opening', $2, $2, $3, NOW() - INTERVAL '90 days', $4)
+           purchase_quantity, purchase_unit, purchase_price, purchased_at,
+           created_by
+         ) VALUES ($1, 'opening', $2, $2, $2, $3, $4, NOW() - INTERVAL '90 days', $5)
          RETURNING id`,
-        [productId, product.openingQuantity, product.purchasePrice, actorId],
+        [
+          productId,
+          product.openingQuantity,
+          product.unit,
+          product.purchasePrice,
+          actorId,
+        ],
       );
       const purchaseDate = `2026-10-${String((index % 24) + 1).padStart(2, '0')}`;
       const purchase = await client.query<{ id: string }>(
         `INSERT INTO stock_batches (
            product_id, batch_type, received_quantity, remaining_quantity,
-           purchase_price, purchased_at, created_by
-         ) VALUES ($1, 'purchase', $2, $2, $3, $4::date, $5)
+           purchase_quantity, purchase_unit, purchase_price, purchased_at,
+           created_by
+         ) VALUES ($1, 'purchase', $2, $2, $2, $3, $4, $5::date, $6)
          RETURNING id`,
         [
           productId,
           product.newQuantity,
+          product.unit,
           product.purchasePrice,
           purchaseDate,
           actorId,

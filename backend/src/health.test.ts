@@ -13,7 +13,7 @@ describe('local API health endpoint', () => {
 
     deepStrictEqual(response.body, {
       status: 'ok',
-      service: 'malligai-kadai-api',
+      service: 'thanigai-stores-api',
       database: 'ok',
       message: 'Thanigai Stores API is running',
     });
@@ -49,7 +49,7 @@ describe('local API health endpoint', () => {
       .set('X-Local-Shutdown-Token', 'test-only-local-shutdown-token')
       .expect(200)
       .expect({
-        service: 'malligai-kadai-api',
+        service: 'thanigai-stores-api',
         processId: process.pid,
         parentProcessId: process.ppid,
       });

@@ -109,11 +109,11 @@ export function verifyToken(token: string, secret: string): AuthClaims {
 export function validateUsername(value: unknown): string {
   if (
     typeof value !== 'string' ||
-    !/^[A-Za-z0-9._-]{3,64}$/.test(value)
+    !/^[A-Za-z0-9._-]{2,64}$/.test(value)
   ) {
     throw new HttpError(
       400,
-      'Username must be 3–64 characters using letters, numbers, dots, underscores, or hyphens.',
+      'Username must be 2–64 characters using letters, numbers, dots, underscores, or hyphens.',
     );
   }
   return value;

@@ -229,6 +229,7 @@ class _BillingScreenState extends State<BillingScreen> {
   final Set<String> _invalidQuantityIds = {};
   bool _isSearching = false;
   bool _isSaving = false;
+  bool _isClearing = false;
   String? _searchError;
   String? _billingError;
   String? _pendingIdempotencyKey;
@@ -613,6 +614,52 @@ class _BillingScreenState extends State<BillingScreen> {
     }
   }
 
+  Future<void> _confirmClearCurrentBill() async {
+    if (_isClearing || _isSaving || _cart.isEmpty) return;
+    setState(() => _isClearing = true);
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Clear current bill?'),
+          content: const Text(
+            'This removes the unsaved items and resets the current bill. '
+            'Previously saved invoices and stock will not be changed.',
+          ),
+          actions: [
+            TextButton(
+              key: const Key('cancelClearCurrentBillButton'),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const Key('confirmClearCurrentBillButton'),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Clear current bill'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      setState(() {
+        _cart.clear();
+        _invalidQuantityIds.clear();
+        _discountController.text = '0.00';
+        _searchController.clear();
+        for (final controller in _splitAmounts.values) {
+          controller.clear();
+        }
+        _paymentMode = 'cash';
+        _pendingIdempotencyKey = null;
+        _billingError = null;
+        _searchError = null;
+      });
+      await _searchProducts();
+    } finally {
+      if (mounted) setState(() => _isClearing = false);
+    }
+  }
+
   BigInt _parseMoney(String value) {
     if (!RegExp(r'^\d+(?:\.\d{0,2})?$').hasMatch(value.trim())) {
       return BigInt.from(-1);
@@ -631,15 +678,11 @@ class _BillingScreenState extends State<BillingScreen> {
           if (_cart.isNotEmpty)
             TextButton.icon(
               key: const Key('clearCartButton'),
-              onPressed: _isSaving
+              onPressed: _isSaving || _isClearing
                   ? null
-                  : () => setState(() {
-                      _cart.clear();
-                      _pendingIdempotencyKey = null;
-                      _billingError = null;
-                    }),
+                  : _confirmClearCurrentBill,
               icon: const Icon(Icons.remove_shopping_cart_outlined),
-              label: const Text('Clear cart'),
+              label: const Text('Clear Current Bill'),
             ),
           const SizedBox(width: 12),
         ],

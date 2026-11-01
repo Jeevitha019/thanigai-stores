@@ -3,16 +3,16 @@ param(
   [string]$Mode = 'Start',
   [Parameter(Mandatory = $true)]
   [string]$RuntimeDirectory,
-  [string]$StateDirectory = (Join-Path $env:LOCALAPPDATA 'Malligai Kadai'),
-  [string]$DataDirectory = (Join-Path $env:LOCALAPPDATA 'Malligai Kadai\PostgreSQL\18\data'),
+  [string]$StateDirectory = (Join-Path $env:LOCALAPPDATA 'Thanigai Stores'),
+  [string]$DataDirectory = (Join-Path $env:LOCALAPPDATA 'Thanigai Stores\PostgreSQL\18\data'),
   [string]$LogPath,
   [string]$ResultPath
 )
 
 $ErrorActionPreference = 'Stop'
 
-$databaseName = 'malligai_kadai'
-$applicationRole = 'malligai_app'
+$databaseName = 'thanigai_stores'
+$applicationRole = 'thanigai_app'
 $bootstrapPath = Join-Path $StateDirectory 'database-bootstrap.bin'
 $pendingPath = Join-Path $StateDirectory 'database-bootstrap.pending.bin'
 $script:SetupStage = 'starting'
@@ -20,13 +20,27 @@ $script:StageStartedAtUtc = [DateTime]::UtcNow
 $script:ManagerStartedAtUtc = [DateTime]::UtcNow
 $script:GeneratedSecrets = @()
 
-if (-not $LogPath) {
-  $LogPath = Join-Path $StateDirectory 'database-setup.log'
+try {
+  if (-not $LogPath) {
+    $LogPath = Join-Path $StateDirectory 'database-setup.log'
+  }
+  New-Item -ItemType Directory -Path $StateDirectory -Force | Out-Null
+  Add-Content -LiteralPath $LogPath -Value (
+    "`nThanigai Stores PostgreSQL $Mode started at $([DateTime]::UtcNow.ToString('u'))."
+  ) -Encoding utf8
+} catch {
+  [Console]::Error.WriteLine(
+    "Thanigai Stores cannot access its per-user database state or log directory '$StateDirectory': $($_.Exception.Message)"
+  )
+  if ($ResultPath) {
+    try {
+      [IO.File]::WriteAllText($ResultPath, '1')
+    } catch {
+      [Console]::Error.WriteLine('The PostgreSQL manager could not write its result file.')
+    }
+  }
+  exit 1
 }
-New-Item -ItemType Directory -Path $StateDirectory -Force | Out-Null
-Add-Content -LiteralPath $LogPath -Value (
-  "`nMalligai Kadai PostgreSQL $Mode started at $([DateTime]::UtcNow.ToString('u'))."
-) -Encoding utf8
 
 function Write-SetupLog {
   param([string]$Message)
@@ -92,7 +106,7 @@ function Protect-Settings {
   param([string]$Json)
 
   Add-Type -AssemblyName System.Security
-  $entropy = [Text.Encoding]::UTF8.GetBytes('MalligaiKadai|PerUserDatabase|v1')
+  $entropy = [Text.Encoding]::UTF8.GetBytes('ThanigaiStores|PerUserDatabase|v1')
   $plain = [Text.Encoding]::UTF8.GetBytes($Json)
   return [Security.Cryptography.ProtectedData]::Protect(
     $plain,
@@ -105,7 +119,7 @@ function Read-ProtectedSettings {
   param([string]$Path)
 
   Add-Type -AssemblyName System.Security
-  $entropy = [Text.Encoding]::UTF8.GetBytes('MalligaiKadai|PerUserDatabase|v1')
+  $entropy = [Text.Encoding]::UTF8.GetBytes('ThanigaiStores|PerUserDatabase|v1')
   $encrypted = [IO.File]::ReadAllBytes($Path)
   $plain = [Security.Cryptography.ProtectedData]::Unprotect(
     $encrypted,
@@ -127,6 +141,32 @@ function Write-ProtectedSettings {
     (Protect-Settings -Json ($Settings | ConvertTo-Json -Compress))
   )
   Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+}
+
+function Test-ValidSettings {
+  param([object]$Settings)
+
+  return $null -ne $Settings -and
+    $Settings.host -eq '127.0.0.1' -and
+    $Settings.database -eq $databaseName -and
+    $Settings.username -eq $applicationRole -and
+    $Settings.port -is [ValueType] -and
+    [int]$Settings.port -ge 55432 -and [int]$Settings.port -le 55462 -and
+    $Settings.password -match '^[0-9a-f]{96}$' -and
+    $Settings.postgresPassword -match '^[0-9a-f]{96}$' -and
+    $Settings.jwtSecret -match '^[0-9a-f]{96}$' -and
+    $Settings.initialSetupToken -match '^[0-9a-f]{96}$'
+}
+
+function Move-UnreadableSettingsToRecovery {
+  param([string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    return
+  }
+  $recoveryPath = "$Path.unreadable-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))"
+  Move-Item -LiteralPath $Path -Destination $recoveryPath
+  Write-SetupLog "Preserved unreadable database settings at $recoveryPath."
 }
 
 function Get-FreeDatabasePort {
@@ -194,6 +234,112 @@ function Get-PostgresTool {
   return $path
 }
 
+function Test-DirectoryWritable {
+  param([string]$Path)
+
+  New-Item -ItemType Directory -Path $Path -Force | Out-Null
+  $probe = Join-Path $Path ('.thanigai-write-test-' + [guid]::NewGuid().ToString('N'))
+  try {
+    [IO.File]::WriteAllText($probe, 'Thanigai Stores PostgreSQL')
+  } finally {
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Assert-PerUserDataDirectory {
+  $expectedPath = [IO.Path]::GetFullPath(
+    (Join-Path $StateDirectory 'PostgreSQL\18\data')
+  ).TrimEnd([IO.Path]::DirectorySeparatorChar)
+  $actualPath = [IO.Path]::GetFullPath($DataDirectory).TrimEnd(
+    [IO.Path]::DirectorySeparatorChar
+  )
+  if (-not [string]::Equals(
+      $expectedPath,
+      $actualPath,
+      [StringComparison]::OrdinalIgnoreCase
+    )) {
+    throw 'The PostgreSQL data directory is outside the Thanigai Stores per-user database path.'
+  }
+  foreach ($path in @(
+    $StateDirectory,
+    (Join-Path $StateDirectory 'PostgreSQL'),
+    (Join-Path $StateDirectory 'PostgreSQL\18'),
+    $DataDirectory
+  )) {
+    if (Test-Path -LiteralPath $path) {
+      $item = Get-Item -LiteralPath $path -Force
+      if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "The Thanigai Stores database path contains an unexpected junction or symbolic link: $path"
+      }
+    }
+  }
+}
+
+function Assert-PostgresInstanceIdentity {
+  param(
+    [string]$PsqlPath,
+    [object]$Settings
+  )
+
+  $previousPassword = $env:PGPASSWORD
+  $env:PGPASSWORD = $Settings.postgresPassword
+  try {
+    $output = @(& $PsqlPath -X -w --set=ON_ERROR_STOP=1 `
+      --host=127.0.0.1 "--port=$($Settings.port)" `
+      --username=postgres --dbname=postgres --tuples-only --no-align `
+      --field-separator='|' `
+      '--command=SELECT current_setting(''data_directory''), current_setting(''config_file''), current_setting(''hba_file''), current_setting(''port''), current_setting(''listen_addresses'');' 2>&1)
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0 -or $output.Count -ne 1) {
+      Save-NativeOutput -Prefix 'PostgreSQL identity verification' -Output $output
+      throw 'PostgreSQL accepted a connection but did not return verifiable instance settings.'
+    }
+    $values = $output[0].ToString().Split('|')
+    if ($values.Count -ne 5) {
+      throw 'PostgreSQL returned an invalid instance identity response.'
+    }
+    $expectedDataPath = [IO.Path]::GetFullPath($DataDirectory).TrimEnd(
+      [IO.Path]::DirectorySeparatorChar
+    )
+    $expectedConfigPath = [IO.Path]::GetFullPath(
+      (Join-Path $DataDirectory 'postgresql.conf')
+    )
+    $expectedHbaPath = [IO.Path]::GetFullPath(
+      (Join-Path $DataDirectory 'pg_hba.conf')
+    )
+    $actualDataPath = [IO.Path]::GetFullPath($values[0]).TrimEnd(
+      [IO.Path]::DirectorySeparatorChar
+    )
+    $actualConfigPath = [IO.Path]::GetFullPath($values[1])
+    $actualHbaPath = [IO.Path]::GetFullPath($values[2])
+    if (
+      -not [string]::Equals($expectedDataPath, $actualDataPath, [StringComparison]::OrdinalIgnoreCase) -or
+      -not [string]::Equals($expectedConfigPath, $actualConfigPath, [StringComparison]::OrdinalIgnoreCase) -or
+      -not [string]::Equals($expectedHbaPath, $actualHbaPath, [StringComparison]::OrdinalIgnoreCase) -or
+      $values[3] -ne [string]$Settings.port -or
+      $values[4] -ne '127.0.0.1'
+    ) {
+      throw 'The PostgreSQL process is not using the verified Thanigai Stores data directory, configuration, loopback address, and saved port.'
+    }
+  } finally {
+    $env:PGPASSWORD = $previousPassword
+  }
+}
+
+function Test-DatabasePortAvailable {
+  param([int]$Port)
+
+  $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port)
+  try {
+    $listener.Start()
+    return $true
+  } catch {
+    return $false
+  } finally {
+    $listener.Stop()
+  }
+}
+
 function Test-PostgresRunning {
   param([string]$PgCtlPath)
 
@@ -208,6 +354,24 @@ function Test-PostgresRunning {
   return $false
 }
 
+function Move-IncompleteClusterToRecovery {
+  param(
+    [string]$Path,
+    [string]$PgCtlPath,
+    [string]$Label
+  )
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return
+  }
+  if (Test-PostgresRunning -PgCtlPath $PgCtlPath) {
+    throw "The $Label PostgreSQL cluster is still running. It was not moved or changed."
+  }
+  $recoveryPath = "$Path.incomplete-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))"
+  Move-Item -LiteralPath $Path -Destination $recoveryPath
+  Write-SetupLog "Preserved incomplete $Label cluster at $recoveryPath before fresh initialization."
+}
+
 function Wait-StartedProcess {
   param(
     [int]$ProcessId,
@@ -220,7 +384,7 @@ using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 
-public static class MalligaiKadaiProcessWaiter
+public static class ThanigaiStoresProcessWaiter
 {
   [DllImport("kernel32.dll", SetLastError = true)]
   private static extern IntPtr OpenProcess(uint access, bool inherit, int processId);
@@ -259,7 +423,7 @@ public static class MalligaiKadaiProcessWaiter
 '@
   }
 
-  return [MalligaiKadaiProcessWaiter]::WaitForExitCode(
+  return [ThanigaiStoresProcessWaiter]::WaitForExitCode(
     $ProcessId,
     [uint32]$TimeoutMilliseconds
   )
@@ -281,6 +445,10 @@ function Start-LocalPostgres {
       Save-NativeOutput -Prefix 'pg_isready' -Output $output
       throw 'The existing PostgreSQL process is not listening on the saved local port. It was not stopped or replaced.'
     }
+    Invoke-Psql -PsqlPath (Get-PostgresTool -Name 'psql') `
+      -Database 'postgres' -Username 'postgres' `
+      -Password $script:CurrentSettings.postgresPassword `
+      -Port $Port -Arguments @('--command=SELECT 1;')
     $elapsed = [int][Math]::Max(
       0,
       ([DateTime]::UtcNow - $readinessStartedAt).TotalMilliseconds
@@ -360,36 +528,60 @@ function Stop-LocalPostgres {
 
 function Start-Database {
   Set-SetupStage 'validating the bundled PostgreSQL runtime'
+  Assert-PerUserDataDirectory
+  Test-DirectoryWritable -Path $StateDirectory
   $postgresPath = Get-PostgresTool -Name 'postgres'
   $initdbPath = Get-PostgresTool -Name 'initdb'
   $pgCtlPath = Get-PostgresTool -Name 'pg_ctl'
   $psqlPath = Get-PostgresTool -Name 'psql'
   $readyPath = Get-PostgresTool -Name 'pg_isready'
-  $version = & $postgresPath --version 2>&1
-  if ($LASTEXITCODE -ne 0 -or $version -notmatch 'PostgreSQL\) 18\.') {
-    throw 'The bundled runtime is invalid or is not PostgreSQL 18.'
+  foreach ($toolPath in @($postgresPath, $initdbPath, $pgCtlPath, $psqlPath, $readyPath)) {
+    $version = & $toolPath --version 2>&1
+    if ($LASTEXITCODE -ne 0 -or $version -notmatch 'PostgreSQL\) 18\.') {
+      throw "The bundled PostgreSQL executable is invalid or not version 18: $toolPath"
+    }
   }
 
-  $hasFinalSettings = Test-Path -LiteralPath $bootstrapPath -PathType Leaf
-  $hasPendingSettings = Test-Path -LiteralPath $pendingPath -PathType Leaf
-  if ($hasFinalSettings) {
-    try {
-      $settings = Read-ProtectedSettings -Path $bootstrapPath
-    } catch {
-      throw 'The saved per-user PostgreSQL settings could not be read. The data directory was left untouched.'
+  $settings = $null
+  $hasFinalSettings = $false
+  foreach ($settingsPath in @($bootstrapPath, $pendingPath)) {
+    if (-not (Test-Path -LiteralPath $settingsPath -PathType Leaf)) {
+      continue
     }
-  } elseif ($hasPendingSettings) {
     try {
-      $settings = Read-ProtectedSettings -Path $pendingPath
-    } catch {
-      throw 'The pending per-user PostgreSQL settings could not be read. The data directory was left untouched.'
-    }
-  } else {
-    if (Test-Path -LiteralPath $DataDirectory) {
-      $files = Get-ChildItem -LiteralPath $DataDirectory -Force
-      if ($files) {
-        throw 'A PostgreSQL data directory exists without Malligai Kadai recovery settings. It was not changed.'
+      $candidateSettings = Read-ProtectedSettings -Path $settingsPath
+      if (Test-ValidSettings -Settings $candidateSettings) {
+        $settings = $candidateSettings
+        $hasFinalSettings = [string]::Equals(
+          $settingsPath,
+          $bootstrapPath,
+          [StringComparison]::OrdinalIgnoreCase
+        )
+        Write-SetupLog "Loaded valid protected database settings from $settingsPath."
+        break
       }
+      Write-SetupLog "Protected database settings at $settingsPath failed validation."
+    } catch {
+      Write-SetupLog "Protected database settings at $settingsPath could not be decrypted."
+    }
+  }
+
+  if ($null -eq $settings) {
+    $hasSavedSettings = (Test-Path -LiteralPath $bootstrapPath -PathType Leaf) -or
+      (Test-Path -LiteralPath $pendingPath -PathType Leaf)
+    if ($hasSavedSettings) {
+      Set-SetupStage 'recovering unreadable per-user database settings'
+      Stop-LocalPostgres
+      Move-IncompleteClusterToRecovery -Path $DataDirectory `
+        -PgCtlPath $pgCtlPath -Label 'unreadable-settings'
+      Move-IncompleteClusterToRecovery -Path "$DataDirectory.initializing" `
+        -PgCtlPath $pgCtlPath -Label 'interrupted initialization'
+      Move-UnreadableSettingsToRecovery -Path $bootstrapPath
+      Move-UnreadableSettingsToRecovery -Path $pendingPath
+    } elseif (Test-Path -LiteralPath $DataDirectory) {
+      Stop-LocalPostgres
+      Move-IncompleteClusterToRecovery -Path $DataDirectory `
+        -PgCtlPath $pgCtlPath -Label 'unconfigured'
     }
     $settings = @{
       host = '127.0.0.1'
@@ -417,37 +609,41 @@ function Start-Database {
     [string]$settings.jwtSecret,
     [string]$settings.initialSetupToken
   )
-  if (
-    $settings.port -isnot [ValueType] -or
-    [int]$settings.port -lt 55432 -or [int]$settings.port -gt 55462 -or
-    $settings.password -notmatch '^[0-9a-f]{96}$' -or
-    $settings.postgresPassword -notmatch '^[0-9a-f]{96}$' -or
-    $settings.jwtSecret -notmatch '^[0-9a-f]{96}$' -or
-    $settings.initialSetupToken -notmatch '^[0-9a-f]{96}$'
-  ) {
-    throw 'Saved per-user PostgreSQL recovery settings are invalid. The data directory was left untouched.'
+  $script:CurrentSettings = $settings
+  if (-not (Test-ValidSettings -Settings $settings)) {
+    throw 'Per-user PostgreSQL settings failed validation. No database changes were made.'
   }
 
   Set-SetupStage 'checking the per-user data directory'
   $clusterVersionPath = Join-Path $DataDirectory 'PG_VERSION'
   $configurationPath = Join-Path $DataDirectory 'postgresql.conf'
-  if (-not (Test-Path -LiteralPath $clusterVersionPath -PathType Leaf)) {
-    if ($hasFinalSettings) {
-      throw 'The saved per-user database settings exist but the PostgreSQL cluster is missing. No data was recreated.'
-    }
-    if (Test-Path -LiteralPath $DataDirectory) {
-      $files = Get-ChildItem -LiteralPath $DataDirectory -Force
-      if ($files) {
-        throw 'PostgreSQL initialization left a non-empty incomplete directory. It was preserved; contact support before retrying.'
-      }
-    }
+  $hbaPath = Join-Path $DataDirectory 'pg_hba.conf'
+  $controlPath = Join-Path $DataDirectory 'global\pg_control'
+  $clusterVersion = if (Test-Path -LiteralPath $clusterVersionPath -PathType Leaf) {
+    (Get-Content -LiteralPath $clusterVersionPath -Raw).Trim()
+  } else {
+    $null
+  }
+  $validCluster = $clusterVersion -eq '18' -and
+    (Test-Path -LiteralPath $configurationPath -PathType Leaf) -and
+    (Test-Path -LiteralPath $hbaPath -PathType Leaf) -and
+    (Test-Path -LiteralPath $controlPath -PathType Leaf)
+  $initializationDirectory = "$DataDirectory.initializing"
+  if (-not $validCluster) {
+    Move-IncompleteClusterToRecovery -Path $DataDirectory `
+      -PgCtlPath $pgCtlPath -Label 'existing'
+    Move-IncompleteClusterToRecovery -Path $initializationDirectory `
+      -PgCtlPath $pgCtlPath -Label 'interrupted initialization'
+
     Set-SetupStage 'initializing the per-user shop database'
-    New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
+    $dataParent = Split-Path -Parent $DataDirectory
+    Test-DirectoryWritable -Path $dataParent
+    New-Item -ItemType Directory -Path $initializationDirectory -Force | Out-Null
     $passwordFile = Join-Path $StateDirectory 'postgres-password.tmp'
     try {
       Set-Content -LiteralPath $passwordFile -Value $settings.postgresPassword `
         -NoNewline -Encoding ascii
-      $output = @(& $initdbPath "--pgdata=$DataDirectory" `
+      $output = @(& $initdbPath "--pgdata=$initializationDirectory" `
         '--username=postgres' "--pwfile=$passwordFile" `
         '--auth-local=scram-sha-256' '--auth-host=scram-sha-256' `
         '--encoding=UTF8' 2>&1)
@@ -457,29 +653,36 @@ function Start-Database {
         Write-SetupLog "initdb exited with code $exitCode."
         throw "PostgreSQL initialization failed with exit code $exitCode. Review the initdb diagnostics above."
       }
+      Move-Item -LiteralPath $initializationDirectory -Destination $DataDirectory
       Write-SetupLog 'Initialized a new PostgreSQL cluster in the current Windows user profile.'
     } finally {
       Remove-Item -LiteralPath $passwordFile -Force -ErrorAction SilentlyContinue
     }
-  } elseif (
-    (Get-Content -LiteralPath $clusterVersionPath -Raw).Trim() -ne '18' -or
-    -not (Test-Path -LiteralPath $configurationPath -PathType Leaf)
-  ) {
-    throw 'The existing per-user PostgreSQL directory is not a complete version-18 cluster. It was preserved.'
   }
+  Test-DirectoryWritable -Path $DataDirectory
 
   $configuration = Get-Content -LiteralPath $configurationPath -Raw
-  if ($configuration -notmatch '(?m)^\s*listen_addresses\s*=') {
-    Add-Content -LiteralPath $configurationPath -Value "`nlisten_addresses = '127.0.0.1'`n" -Encoding ascii
-  }
-  if ($configuration -notmatch '(?m)^\s*port\s*=') {
-    Add-Content -LiteralPath $configurationPath -Value "`nport = $($settings.port)`n" -Encoding ascii
+  $configuration = [regex]::Replace(
+    $configuration,
+    '(?im)^\s*(?:listen_addresses|port|data_directory|hba_file)\s*=.*(?:\r?\n|$)',
+    ''
+  )
+  $postgresDataPath = $DataDirectory.Replace('\', '/').Replace("'", "''")
+  $configuration += "`r`nlisten_addresses = '127.0.0.1'`r`nport = $($settings.port)`r`ndata_directory = '$postgresDataPath'`r`nhba_file = '$postgresDataPath/pg_hba.conf'`r`n"
+  [IO.File]::WriteAllText(
+    $configurationPath,
+    $configuration,
+    [Text.UTF8Encoding]::new($false)
+  )
+  if (-not (Test-PostgresRunning -PgCtlPath $pgCtlPath) -and
+      -not (Test-DatabasePortAvailable -Port ([int]$settings.port))) {
+    throw "Saved PostgreSQL port $($settings.port) is already in use by another process. No process was stopped."
   }
   Start-LocalPostgres -PgCtlPath $pgCtlPath -ReadyPath $readyPath `
     -Port ([int]$settings.port)
+  Assert-PostgresInstanceIdentity -PsqlPath $psqlPath -Settings $settings
 
-  if (-not $hasFinalSettings) {
-    Set-SetupStage 'creating the per-user application database'
+  Set-SetupStage 'verifying and repairing the per-user application database'
     $sqlDirectory = Join-Path $StateDirectory ('setup-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $sqlDirectory -Force | Out-Null
     $sqlPath = Join-Path $sqlDirectory 'initialize-shop.sql'
@@ -492,6 +695,7 @@ CREATE ROLE $applicationRole LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICA
 \endif
 SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = '$databaseName') AS shop_database_exists \gset
 \if :shop_database_exists
+ALTER DATABASE $databaseName OWNER TO $applicationRole;
 \else
 CREATE DATABASE $databaseName OWNER $applicationRole;
 \endif
@@ -509,9 +713,10 @@ CREATE DATABASE $databaseName OWNER $applicationRole;
     Invoke-Psql -PsqlPath $psqlPath -Database $databaseName `
       -Username $applicationRole -Password $settings.password `
       -Port ([int]$settings.port) -Arguments @('--command=SELECT 1;')
-    Write-ProtectedSettings -Path $bootstrapPath -Settings $settings
+    if (-not $hasFinalSettings) {
+      Write-ProtectedSettings -Path $bootstrapPath -Settings $settings
+    }
     Remove-Item -LiteralPath $pendingPath -Force -ErrorAction SilentlyContinue
-  }
 
   Set-SetupStage 'complete'
   Write-SetupLog "Local PostgreSQL is ready on loopback port $($settings.port)."
@@ -535,6 +740,6 @@ try {
   $message = [regex]::Replace($message, '\b[0-9a-f]{96}\b', '[REDACTED]')
   Write-SetupLog "Failed: $message"
   Write-SetupResult -ExitCode 1
-  Write-Error "Malligai Kadai PostgreSQL $Mode failed during $script:SetupStage. Details were written to $LogPath."
+  Write-Error "Thanigai Stores PostgreSQL $Mode failed during $script:SetupStage. Details were written to $LogPath."
   exit 1
 }

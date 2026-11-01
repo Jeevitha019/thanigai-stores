@@ -93,6 +93,7 @@ class FakeAuthGateway implements AuthGateway {
       unit: draft.unit,
       purchasePrice: draft.purchasePrice,
       sellingPrice: draft.sellingPrice,
+      mrp: draft.mrp,
       sellingQuantity: draft.sellingQuantity,
       openingStockQuantity: draft.openingStockQuantity,
       stockQuantity: draft.openingStockQuantity,
@@ -112,6 +113,7 @@ class FakeAuthGateway implements AuthGateway {
       unit: draft.unit,
       purchasePrice: draft.purchasePrice,
       sellingPrice: draft.sellingPrice,
+      mrp: draft.mrp,
       sellingQuantity: draft.sellingQuantity,
       openingStockQuantity: draft.openingStockQuantity,
       gstRate: draft.gstRate,
@@ -748,25 +750,25 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Create cashier login'), findsOneWidget);
 
-    await tester.enterText(
-      find.byKey(const Key('cashierUsernameField')),
-      'evening-cashier',
-    );
+    await tester.enterText(find.byKey(const Key('cashierUsernameField')), 'a');
     await tester.enterText(
       find.byKey(const Key('cashierPasswordField')),
       'A-strong-cashier-password',
     );
     await tester.tap(find.byKey(const Key('saveCashierButton')));
     await tester.pumpAndSettle();
-
+    expect(gateway.createdCashiers, isEmpty);
     expect(
-      gateway.createdCashiers['evening-cashier'],
-      'A-strong-cashier-password',
-    );
-    expect(
-      find.text('Cashier login created for evening-cashier.'),
+      find.text('Use 2–64 letters, numbers, dots, _ or -.'),
       findsOneWidget,
     );
+
+    await tester.enterText(find.byKey(const Key('cashierUsernameField')), 'ab');
+    await tester.tap(find.byKey(const Key('saveCashierButton')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.createdCashiers['ab'], 'A-strong-cashier-password');
+    expect(find.text('Cashier login created for ab.'), findsOneWidget);
   });
 
   testWidgets('Admin can add a product and cashier can only view products', (
@@ -854,7 +856,7 @@ void main() {
     expect(find.text('Buy ₹80.00'), findsNothing);
   });
 
-  testWidgets('product page hides Excel import and keeps product creation', (
+  testWidgets('product page offers add, delete and Excel import actions', (
     tester,
   ) async {
     final gateway = FakeAuthGateway();
@@ -863,9 +865,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('importSampleProductsButton')), findsNothing);
-    expect(find.text('Import sample Excel'), findsNothing);
+    expect(find.byKey(const Key('importProductsXlsxButton')), findsOneWidget);
+    expect(find.text('Import from Excel'), findsOneWidget);
     expect(find.byKey(const Key('addProductButton')), findsOneWidget);
+    expect(find.byKey(const Key('deleteProductButton')), findsOneWidget);
     expect(find.byKey(const Key('exportProductsXlsxButton')), findsOneWidget);
   });
 
@@ -895,8 +898,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('openProductsButton')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('deleteProduct-22')));
+    await tester.tap(find.byKey(const Key('deleteProductButton')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('selectProductToDelete-22')));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Invoice and financial history will be preserved.'),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('confirmDeleteProductButton')));
     await tester.pumpAndSettle();
 

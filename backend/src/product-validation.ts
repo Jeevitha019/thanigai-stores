@@ -78,6 +78,10 @@ export function validateProductInput(body: Record<string, unknown>): ProductInpu
     0,
     999999999.999,
   );
+  const mrp =
+    body.mrp == null || body.mrp === ''
+      ? null
+      : decimal(body.mrp, 'MRP', 2, 0, 9999999999.99);
 
   const sku =
     typeof body.sku === 'string' && body.sku.trim()
@@ -91,6 +95,7 @@ export function validateProductInput(body: Record<string, unknown>): ProductInpu
     unit: unit as ProductUnit,
     purchasePrice: decimal(body.purchasePrice, 'Purchase price', 2, 0, 9999999999.99),
     sellingPrice: decimal(body.sellingPrice, 'Selling price', 2, 0.01, 9999999999.99),
+    mrp,
     sellingQuantity,
     openingStockQuantity,
     gstRate,

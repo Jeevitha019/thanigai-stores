@@ -12,6 +12,7 @@ interface ProductRow {
   unit: ProductUnit;
   purchase_price: string;
   selling_price: string;
+  mrp: string | null;
   selling_quantity: string;
   opening_stock_quantity: string;
   stock_quantity: string;
@@ -22,7 +23,7 @@ interface ProductRow {
 
 const columns = `
   id, name, sku, category, unit,
-  purchase_price, selling_price, selling_quantity, opening_stock_quantity,
+  purchase_price, selling_price, mrp, selling_quantity, opening_stock_quantity,
   stock_quantity, gst_rate, created_at, updated_at
 `;
 
@@ -35,6 +36,7 @@ function toProduct(row: ProductRow): Product {
     unit: row.unit,
     purchasePrice: row.purchase_price,
     sellingPrice: row.selling_price,
+    mrp: row.mrp,
     sellingQuantity: row.selling_quantity,
     openingStockQuantity: row.opening_stock_quantity,
     stockQuantity: row.stock_quantity,
@@ -71,11 +73,11 @@ export const postgresProductRepository: ProductRepository = {
     return inTransaction(async (client) => {
       const result = await client.query<ProductRow>(
         `INSERT INTO products (
-           name, sku, category, unit, purchase_price, selling_price, selling_quantity,
+           name, sku, category, unit, purchase_price, selling_price, mrp, selling_quantity,
            opening_stock_quantity,
            stock_quantity, low_stock_threshold, gst_rate
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, 0, $9)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, 0, $10)
          RETURNING ${columns}`,
         [
           input.name,
@@ -84,6 +86,7 @@ export const postgresProductRepository: ProductRepository = {
           input.unit,
           input.purchasePrice,
           input.sellingPrice,
+          input.mrp ?? null,
           input.sellingQuantity,
           input.openingStockQuantity ?? '0.000',
           input.gstRate,
@@ -159,8 +162,9 @@ export const postgresProductRepository: ProductRepository = {
            unit = $5,
            purchase_price = $6,
            selling_price = $7,
-           selling_quantity = $8,
-           gst_rate = $9,
+           mrp = $8,
+           selling_quantity = $9,
+           gst_rate = $10,
            updated_at = NOW()
          WHERE id = $1 AND is_active = TRUE
          RETURNING ${columns}`,
@@ -172,6 +176,7 @@ export const postgresProductRepository: ProductRepository = {
           input.unit,
           input.purchasePrice,
           input.sellingPrice,
+          input.mrp ?? null,
           input.sellingQuantity,
           input.gstRate,
         ],

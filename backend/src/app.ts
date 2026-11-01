@@ -171,14 +171,14 @@ export function createApp(options: AppOptions = {}) {
       await options.healthCheck?.();
       response.status(200).json({
         status: 'ok',
-        service: 'malligai-kadai-api',
+        service: 'thanigai-stores-api',
         database: options.healthCheck ? 'ok' : 'unchecked',
         message: 'Thanigai Stores API is running',
       });
     } catch {
       response.status(503).json({
         status: 'error',
-        service: 'malligai-kadai-api',
+        service: 'thanigai-stores-api',
         database: 'unavailable',
         message: 'The local database is unavailable.',
       });
@@ -191,7 +191,7 @@ export function createApp(options: AppOptions = {}) {
       return;
     }
     response.status(200).json({
-      service: 'malligai-kadai-api',
+      service: 'thanigai-stores-api',
       processId: process.pid,
       parentProcessId: process.ppid,
     });

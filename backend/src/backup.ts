@@ -104,7 +104,7 @@ function backupDirectory(): string {
   const appData =
     process.env.APPDATA ??
     path.join(homedir(), 'AppData', 'Roaming');
-  const directory = path.resolve(appData, 'Malligai Kadai', 'Backups');
+  const directory = path.resolve(appData, 'Thanigai Stores', 'Backups');
   const projectRoot = path.resolve(__dirname, '../..');
   const relative = path.relative(projectRoot, directory);
   if (
@@ -119,7 +119,7 @@ function backupDirectory(): string {
 }
 
 function validateFileName(fileName: string): string {
-  if (!/^malligai-kadai_\d{8}_\d{6}_[a-f0-9-]{36}\.dump$/.test(fileName)) {
+  if (!/^thanigai-stores_\d{8}_\d{6}_[a-f0-9-]{36}\.dump$/.test(fileName)) {
     throw new HttpError(400, 'Choose a backup created by this application.');
   }
   return fileName;
@@ -146,7 +146,7 @@ export class BackupService {
   async list(): Promise<BackupFile[]> {
     await this.ensureDirectory();
     const names = (await readdir(this.directory))
-      .filter((name) => /^malligai-kadai_\d{8}_\d{6}_[a-f0-9-]{36}\.dump$/.test(name))
+      .filter((name) => /^thanigai-stores_\d{8}_\d{6}_[a-f0-9-]{36}\.dump$/.test(name))
       .sort()
       .reverse();
     const found = await Promise.all(
@@ -358,7 +358,7 @@ export class BackupService {
       .replace(/[-:]/g, '')
       .replace(/\.\d{3}Z$/, '')
       .replace('T', '_');
-    return `malligai-kadai_${timestamp}_${randomUUID()}.dump`;
+    return `thanigai-stores_${timestamp}_${randomUUID()}.dump`;
   }
 }
 

@@ -279,17 +279,28 @@ class WindowsReceiptPrinterGateway implements ReceiptPrinterGateway {
       ..layout(
         ui.ParagraphConstraints(width: format.availableWidth * renderScale),
       );
-    final paragraphBuilder =
-        ui.ParagraphBuilder(
-            ui.ParagraphStyle(
-              fontFamily: 'Consolas',
-              fontSize: 7.8 * renderScale,
-              height: 1.25,
-              textDirection: ui.TextDirection.ltr,
-            ),
-          )
-          ..pushStyle(ui.TextStyle(color: const ui.Color(0xFF000000)))
-          ..addText(lines.skip(1).join('\n'));
+    final paragraphBuilder = ui.ParagraphBuilder(
+      ui.ParagraphStyle(
+        fontFamily: 'Consolas',
+        fontSize: 7.8 * renderScale,
+        height: 1.25,
+        textDirection: ui.TextDirection.ltr,
+      ),
+    );
+    for (var index = 1; index < lines.length; index += 1) {
+      final isTotal = lines[index].startsWith('TOTAL');
+      paragraphBuilder
+        ..pushStyle(
+          ui.TextStyle(
+            color: const ui.Color(0xFF000000),
+            fontSize: isTotal ? 9.2 * renderScale : 7.8 * renderScale,
+            fontWeight: isTotal ? ui.FontWeight.bold : ui.FontWeight.normal,
+          ),
+        )
+        ..addText(lines[index])
+        ..pop();
+      if (index < lines.length - 1) paragraphBuilder.addText('\n');
+    }
     final paragraph = paragraphBuilder.build()
       ..layout(
         ui.ParagraphConstraints(width: format.availableWidth * renderScale),
@@ -304,7 +315,7 @@ class WindowsReceiptPrinterGateway implements ReceiptPrinterGateway {
     final logo = logoFrame.image;
     final logoMaxWidth = math.min(
       (paperWidthMm - 12) * PdfPageFormat.mm * renderScale,
-      paperWidthMm * 0.4 * PdfPageFormat.mm * renderScale,
+      48 * PdfPageFormat.mm * renderScale,
     );
     const logoMaxHeight = 24 * PdfPageFormat.mm * renderScale;
     const logoGap = 1 * PdfPageFormat.mm * renderScale;

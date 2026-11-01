@@ -68,6 +68,7 @@ before(async () => {
     '012_void_invoices.sql',
     '013_product_selling_quantities.sql',
     '014_stock_batches.sql',
+    '016_stock_purchase_units.sql',
   ]) {
     const sql = await readFile(
       path.resolve(__dirname, '../migrations', migration),
@@ -122,10 +123,10 @@ before(async () => {
   await testPool.query(
     `INSERT INTO stock_batches (
        product_id, batch_type, received_quantity, remaining_quantity,
-       purchase_price, purchased_at
+       purchase_quantity, purchase_unit, purchase_price, purchased_at
      )
-     SELECT id, 'opening', stock_quantity, stock_quantity,
-            purchase_price, created_at
+     SELECT id, 'opening', stock_quantity, stock_quantity, stock_quantity,
+            unit, purchase_price, created_at
      FROM products
      WHERE name LIKE 'TEST ONLY - %'
        AND NOT EXISTS (
@@ -763,10 +764,10 @@ it(
     await testPool!.query(
       `INSERT INTO stock_batches (
          product_id, batch_type, received_quantity, remaining_quantity,
-         purchase_price, purchased_at
+         purchase_quantity, purchase_unit, purchase_price, purchased_at
        )
-       SELECT id, 'opening', stock_quantity, stock_quantity,
-              purchase_price, created_at
+       SELECT id, 'opening', stock_quantity, stock_quantity, stock_quantity,
+              unit, purchase_price, created_at
        FROM products WHERE id = $1`,
       [packet.rows[0].id],
     );

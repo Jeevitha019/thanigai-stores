@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'product_gateway.dart';
 import 'product_xlsx.dart';
+import 'sample_product_importer.dart';
 
 class ProductScreen extends StatefulWidget {
   const ProductScreen({
@@ -30,6 +31,7 @@ class _ProductScreenState extends State<ProductScreen> {
   bool _isLoading = true;
   String? _error;
   int _loadGeneration = 0;
+  bool _isImporting = false;
 
   @override
   void initState() {
@@ -142,6 +144,113 @@ class _ProductScreenState extends State<ProductScreen> {
     }
   }
 
+  Future<void> _importProducts() async {
+    try {
+      const xlsxType = XTypeGroup(
+        label: 'Excel workbook',
+        extensions: ['xlsx'],
+      );
+      final file = await openFile(acceptedTypeGroups: const [xlsxType]);
+      if (file == null || !mounted) return;
+      final importData = SampleProductImporter.parseWithValidation(
+        await file.readAsBytes(),
+      );
+      if (importData.products.isEmpty) {
+        throw FormatException(
+          importData.rowErrors.isEmpty
+              ? 'The Excel file contains no valid product rows.'
+              : importData.rowErrors.join('\n'),
+        );
+      }
+      final existing = await widget.gateway.searchProducts('');
+      final plan = SampleProductImporter.plan(importData.products, existing);
+      if (!mounted) return;
+      if (plan.products.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              plan.duplicateCount == 0
+                  ? 'The Excel file contains no products to import.'
+                  : 'No new products to import. Skipped ${plan.duplicateCount} duplicates and ${importData.rowErrors.length} invalid rows.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (_) => _ProductImportPreviewDialog(
+          plan: plan,
+          rowErrors: importData.rowErrors,
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      setState(() => _isImporting = true);
+      var importedCount = 0;
+      try {
+        for (final product in plan.products) {
+          await widget.gateway.createProduct(product);
+          importedCount += 1;
+        }
+      } catch (error) {
+        if (mounted) {
+          final message = error is ProductFailure
+              ? error.message
+              : 'An unexpected error occurred.';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                importedCount == 0
+                    ? 'Import failed: $message'
+                    : 'Imported $importedCount products before the import stopped: $message',
+              ),
+            ),
+          );
+          await _loadProducts();
+        }
+        return;
+      } finally {
+        if (mounted) setState(() => _isImporting = false);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Imported $importedCount products. Skipped ${plan.duplicateCount} duplicates and ${importData.rowErrors.length} invalid rows.',
+            ),
+          ),
+        );
+        await _loadProducts();
+      }
+    } on FormatException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Excel validation failed: ${error.message}')),
+        );
+      }
+    } on ProductFailure catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } on FileSystemException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not read the Excel file: ${error.message}'),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import products: $error')),
+        );
+      }
+    }
+  }
+
   Future<void> _editProduct([ProductItem? product]) async {
     final draft = await showDialog<ProductDraft>(
       context: context,
@@ -200,6 +309,7 @@ class _ProductScreenState extends State<ProductScreen> {
           unit: product.unit,
           purchasePrice: product.purchasePrice ?? '0',
           sellingPrice: sellingPrice,
+          mrp: product.mrp,
           sellingQuantity: product.sellingQuantity,
           gstRate: product.gstRate,
         ),
@@ -224,13 +334,51 @@ class _ProductScreenState extends State<ProductScreen> {
     }
   }
 
-  Future<void> _deleteProduct(ProductItem product) async {
+  Future<void> _selectProductToDelete() async {
+    late final List<ProductItem> products;
+    try {
+      products = await widget.gateway.searchProducts('');
+    } on ProductFailure catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+      return;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load products: $error')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    if (products.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('There are no active products to delete.'),
+        ),
+      );
+      return;
+    }
+    final product = await showDialog<ProductItem>(
+      context: context,
+      builder: (_) => _ProductSelectionDialog(products: products),
+    );
+    if (product == null || !mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete product?'),
+        title: const Text('Confirm product deletion'),
         content: Text(
-          '${product.name} will be removed from the active product list.',
+          'Product: ${product.name}\n'
+          'Category: ${product.category}\n'
+          'Code: ${product.sku.isEmpty ? '-' : product.sku}\n'
+          'Unit: ${product.unit}\n'
+          'Purchase price: ₹${product.purchasePrice ?? '-'}\n'
+          'Selling price: ₹${product.sellingPrice}\n'
+          'MRP: ${product.mrp == null ? '-' : '₹${product.mrp}'}\n\n'
+          'This removes the product from active lists. Invoice and financial history will be preserved.',
         ),
         actions: [
           TextButton(
@@ -240,7 +388,7 @@ class _ProductScreenState extends State<ProductScreen> {
           FilledButton(
             key: const Key('confirmDeleteProductButton'),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
+            child: const Text('Confirm delete'),
           ),
         ],
       ),
@@ -323,17 +471,35 @@ class _ProductScreenState extends State<ProductScreen> {
                         ),
                       ),
                     ),
-                    if (widget.canManage) ...[
-                      const SizedBox(width: 12),
+                  ],
+                ),
+                if (widget.canManage) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
                       FilledButton.icon(
                         key: const Key('addProductButton'),
-                        onPressed: () => _editProduct(),
+                        onPressed: _isImporting ? null : () => _editProduct(),
                         icon: const Icon(Icons.add_rounded),
                         label: const Text('Add product'),
                       ),
+                      OutlinedButton.icon(
+                        key: const Key('deleteProductButton'),
+                        onPressed: _isImporting ? null : _selectProductToDelete,
+                        icon: const Icon(Icons.delete_outline_rounded),
+                        label: const Text('Delete product'),
+                      ),
+                      OutlinedButton.icon(
+                        key: const Key('importProductsXlsxButton'),
+                        onPressed: _isImporting ? null : _importProducts,
+                        icon: const Icon(Icons.upload_file_rounded),
+                        label: const Text('Import from Excel'),
+                      ),
                     ],
-                  ],
-                ),
+                  ),
+                ],
                 const SizedBox(height: 20),
                 if (_isLoading)
                   const Expanded(
@@ -451,18 +617,163 @@ class _ProductScreenState extends State<ProductScreen> {
                 onPressed: () => _editProduct(product),
                 icon: const Icon(Icons.edit_outlined),
               ),
-              IconButton(
-                key: Key('deleteProduct-${product.id}'),
-                tooltip: 'Delete ${product.name}',
-                onPressed: () => _deleteProduct(product),
-                icon: const Icon(Icons.delete_outline_rounded),
-              ),
             ],
           ],
         ),
       ),
     );
   }
+}
+
+class _ProductSelectionDialog extends StatefulWidget {
+  const _ProductSelectionDialog({required this.products});
+
+  final List<ProductItem> products;
+
+  @override
+  State<_ProductSelectionDialog> createState() =>
+      _ProductSelectionDialogState();
+}
+
+class _ProductSelectionDialogState extends State<_ProductSelectionDialog> {
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final query = _searchController.text.trim().toLowerCase();
+    final products = widget.products
+        .where((product) {
+          return product.name.toLowerCase().contains(query) ||
+              product.category.toLowerCase().contains(query) ||
+              product.sku.toLowerCase().contains(query);
+        })
+        .toList(growable: false);
+    return AlertDialog(
+      title: const Text('Select a product to delete'),
+      content: SizedBox(
+        width: 480,
+        height: 420,
+        child: Column(
+          children: [
+            TextField(
+              key: const Key('deleteProductSearchField'),
+              controller: _searchController,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                hintText: 'Search name, category or code',
+                prefixIcon: Icon(Icons.search_rounded),
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: products.isEmpty
+                  ? const Center(child: Text('No matching products.'))
+                  : ListView.builder(
+                      itemCount: products.length,
+                      itemBuilder: (context, index) {
+                        final product = products[index];
+                        return ListTile(
+                          key: Key('selectProductToDelete-${product.id}'),
+                          title: Text(product.name),
+                          subtitle: Text(
+                            '${product.category} · ${product.sku.isEmpty ? 'No code' : product.sku}',
+                          ),
+                          onTap: () => Navigator.pop(context, product),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProductImportPreviewDialog extends StatelessWidget {
+  const _ProductImportPreviewDialog({
+    required this.plan,
+    required this.rowErrors,
+  });
+
+  final ProductImportPlan plan;
+  final List<String> rowErrors;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Review Excel import'),
+    content: SizedBox(
+      width: 560,
+      height: 400,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${plan.products.length} new products will be added.'
+            '${plan.duplicateCount > 0 ? ' ${plan.duplicateCount} duplicate rows will be skipped.' : ''}'
+            '${rowErrors.isNotEmpty ? ' ${rowErrors.length} invalid rows will be skipped.' : ''}',
+          ),
+          if (rowErrors.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 76),
+              child: SingleChildScrollView(
+                child: Text(
+                  rowErrors.join('\n'),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Expanded(
+            child: ListView.builder(
+              itemCount: plan.products.length,
+              itemBuilder: (context, index) {
+                final product = plan.products[index];
+                return ListTile(
+                  title: Text(product.name),
+                  subtitle: Text(
+                    '${product.category} · ${product.unit} · '
+                    'Buy ₹${product.purchasePrice} · Sell ₹${product.sellingPrice}'
+                    '${product.mrp == null ? '' : ' · MRP ₹${product.mrp}'}'
+                    ' · Stock ${product.openingStockQuantity}',
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context, false),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        key: const Key('confirmProductImportButton'),
+        onPressed: () => Navigator.pop(context, true),
+        child: const Text('Import products'),
+      ),
+    ],
+  );
 }
 
 class _SellingPriceDialog extends StatefulWidget {
@@ -562,6 +873,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
         text: product?.purchasePrice ?? '0.00',
       ),
       'sellingPrice': TextEditingController(text: product?.sellingPrice ?? ''),
+      'mrp': TextEditingController(text: product?.mrp ?? ''),
       'sellingQuantity': TextEditingController(
         text: product?.sellingQuantity ?? '1',
       ),
@@ -623,6 +935,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
         unit: _unit,
         purchasePrice: _controllers['purchasePrice']!.text,
         sellingPrice: _controllers['sellingPrice']!.text,
+        mrp: _controllers['mrp']!.text,
         sellingQuantity: _controllers['sellingQuantity']!.text,
         openingStockQuantity: _controllers['openingStockQuantity']!.text,
         gstRate: widget.product?.gstRate ?? '0',
@@ -694,6 +1007,15 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
                   scale: 2,
                   minimum: 0,
                   maximum: 9999999999.99,
+                ),
+                _numberField(
+                  'mrp',
+                  'MRP (₹)',
+                  'productMrpField',
+                  scale: 2,
+                  minimum: 0,
+                  maximum: 9999999999.99,
+                  optional: true,
                 ),
                 if (!isEditing)
                   _numberField(
@@ -770,6 +1092,7 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
     required double maximum,
     String? suffix,
     String? helperText,
+    bool optional = false,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
@@ -783,13 +1106,16 @@ class _ProductEditorDialogState extends State<_ProductEditorDialog> {
           suffixText: suffix,
           helperText: helperText,
         ),
-        validator: (value) => _decimal(
-          value,
-          label: label,
-          scale: scale,
-          minimum: minimum,
-          maximum: maximum,
-        ),
+        validator: (value) {
+          if (optional && (value == null || value.trim().isEmpty)) return null;
+          return _decimal(
+            value,
+            label: label,
+            scale: scale,
+            minimum: minimum,
+            maximum: maximum,
+          );
+        },
       ),
     );
   }

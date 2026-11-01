@@ -133,6 +133,7 @@ describe('authentication API', () => {
   before(async () => {
     await repository.addUser('owner', 'admin', 'Admin-password-123');
     await repository.addUser('till', 'cashier', 'Cashier-password-123');
+    await repository.addUser('x', 'cashier', 'Legacy-password-123');
   });
 
   it('authenticates a user and returns no password hash', async () => {
@@ -245,6 +246,21 @@ describe('authentication API', () => {
     equal(await bcrypt.compare('1234', stored.passwordHash), true);
     await request(app)
       .post('/admin/cashiers')
+      .set('Authorization', 'Bearer ' + adminToken)
+      .send({ username: 'ab', password: '1234' })
+      .expect(201);
+    await request(app)
+      .post('/admin/cashiers')
+      .set('Authorization', 'Bearer ' + adminToken)
+      .send({ username: 'a', password: '1234' })
+      .expect(400);
+    await request(app)
+      .post('/admin/cashiers')
+      .set('Authorization', 'Bearer ' + adminToken)
+      .send({ username: '', password: '1234' })
+      .expect(400);
+    await request(app)
+      .post('/admin/cashiers')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ username: 'short-till', password: '123' })
       .expect(400);
@@ -253,6 +269,14 @@ describe('authentication API', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ username: 'NEW-TILL', password: '1234' })
       .expect(409);
+  });
+
+  it('continues to authenticate an existing one-character username', async () => {
+    const response = await request(app)
+      .post('/auth/login')
+      .send({ username: 'x', password: 'Legacy-password-123' })
+      .expect(200);
+    equal(response.body.user.username, 'x');
   });
 
   it('lets an Admin reset either role password only through the Admin API', async () => {

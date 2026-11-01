@@ -72,7 +72,7 @@ void main() {
     expect(receipt, contains('Total'));
     expect(receipt, contains('Basmati Rice'));
     expect(receipt, contains('₹10.00'));
-    expect(receipt, contains('Amount after discount'));
+    expect(receipt, isNot(contains('Amount after discount')));
     expect(receipt, contains('GST'));
     expect(receipt, contains('₹0.50'));
     expect(receipt, isNot(contains('CGST')));
@@ -82,19 +82,21 @@ void main() {
     expect(receipt, contains('Total Items'));
     expect(receipt, contains('Payment method'));
     expect(receipt, contains('CASH ₹4.00 + UPI ₹6.50'));
-    expect(receipt, contains('Discount'));
-    expect(receipt, contains('THANK YOU! VISIT US AGAIN!'));
+    expect(receipt, isNot(contains('Discount')));
+    expect(receipt, contains('TOTAL  ₹10.50'));
+    expect(receipt, isNot(contains('1 kg')));
+    expect(receipt, contains('THANK YOU! VISIT US AGAIN!!'));
     expect(receipt, contains('12 Test Street, Chennai'));
     expect(receipt, contains('+91 98765 43210'));
     expect(receipt, contains('Developed By ZEROPOINT LABS'));
     expect(receipt, contains('www.zeropointlabs.in'));
     expect(lines.every((line) => line.length <= 44), isTrue);
     final footerStart = lines.indexWhere(
-      (line) => line.trim() == 'THANK YOU! VISIT US AGAIN!',
+      (line) => line.trim() == 'THANK YOU! VISIT US AGAIN!!',
     );
     expect(footerStart, greaterThan(0));
     expect(lines.skip(footerStart).map((line) => line.trim()).toList(), [
-      'THANK YOU! VISIT US AGAIN!',
+      'THANK YOU! VISIT US AGAIN!!',
       '12 Test Street, Chennai',
       '+91 98765 43210',
       '',
@@ -206,7 +208,7 @@ void main() {
     expect(lines.where((line) => line.startsWith('-')).length, 6);
     expect(
       ReceiptFormatter.formatA4Footer(invoice).join('\n'),
-      contains('THANK YOU! VISIT US AGAIN!'),
+      contains('THANK YOU! VISIT US AGAIN!!'),
     );
     expect(
       ReceiptFormatter.formatA4Footer(invoice).join('\n'),
@@ -225,6 +227,15 @@ void main() {
       replayed: false,
     );
 
+    final thermalLines = ReceiptFormatter.format(
+      discountedInvoice,
+      paperWidthMm: 80,
+      printableWidthMm: 72,
+    );
+    expect(thermalLines.join('\n'), contains('Discount'));
+    expect(thermalLines.join('\n'), contains('TOTAL  ₹10.00'));
+    expect(thermalLines.join('\n'), isNot(contains('Amount after discount')));
+
     final lines = ReceiptFormatter.formatA4(discountedInvoice);
     final amountAfterDiscount = lines.singleWhere(
       (line) => line.contains('Amount after discount'),
@@ -233,40 +244,37 @@ void main() {
     expect(amountAfterDiscount.trimRight(), endsWith('₹10.00'));
   });
 
-  test(
-    'does not print GST components for invoices saved with GST disabled',
-    () {
-      const untaxed = SavedInvoice(
-        invoiceNumber: 'INV-OLD-1',
-        cashierName: 'legacy-cashier',
-        subtotal: '4.00',
-        grandTotal: '4.00',
-        createdAt: '2026-10-19T12:30:00.000Z',
-        items: [
-          SavedInvoiceItem(
-            productName: 'Tea',
-            sku: 'TEA',
-            unit: 'packet',
-            unitPrice: '4.00',
-            quantity: '1',
-            lineTotal: '4.00',
-          ),
-        ],
-        replayed: false,
-      );
+  test('omits GST and discount when they do not apply to a receipt', () {
+    const untaxed = SavedInvoice(
+      invoiceNumber: 'INV-OLD-1',
+      cashierName: 'legacy-cashier',
+      subtotal: '4.00',
+      grandTotal: '4.00',
+      createdAt: '2026-10-19T12:30:00.000Z',
+      items: [
+        SavedInvoiceItem(
+          productName: 'Tea',
+          sku: 'TEA',
+          unit: 'packet',
+          unitPrice: '4.00',
+          quantity: '1',
+          lineTotal: '4.00',
+        ),
+      ],
+      replayed: false,
+    );
 
-      final receipt = ReceiptFormatter.format(
-        untaxed,
-        paperWidthMm: 58,
-      ).join('\n');
+    final receipt = ReceiptFormatter.format(
+      untaxed,
+      paperWidthMm: 58,
+    ).join('\n');
 
-      expect(receipt, contains('GST'));
-      expect(receipt, contains('Disabled'));
-      expect(receipt, isNot(contains('CGST')));
-      expect(receipt, isNot(contains('SGST')));
-      expect(receipt, isNot(contains('IGST')));
-    },
-  );
+    expect(receipt, isNot(contains('GST')));
+    expect(receipt, isNot(contains('Discount')));
+    expect(receipt, isNot(contains('CGST')));
+    expect(receipt, isNot(contains('SGST')));
+    expect(receipt, isNot(contains('IGST')));
+  });
 
   test(
     'uses a narrower line width for 58mm receipts and marks test prints',
@@ -395,7 +403,8 @@ void main() {
         expect(longNameIndex, greaterThanOrEqualTo(0));
         expect(longNameRows.length, greaterThan(1));
         expect(longNameRows.every((line) => line.length == columns), isTrue);
-        expect(riceRow, contains('2 kg'));
+        expect(riceRow, contains('  2 '));
+        expect(riceRow, isNot(contains('kg')));
         expect(riceRow, contains('₹25.00'));
         expect(riceRow.trimRight(), endsWith('₹50.00'));
         expect(receipt, contains('₹5.00'));

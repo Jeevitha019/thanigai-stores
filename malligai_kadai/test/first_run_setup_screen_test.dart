@@ -3,6 +3,55 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:malligai_kadai/auth/first_run_setup_screen.dart';
 
 void main() {
+  testWidgets('accepts two-character admin usernames and rejects one', (
+    tester,
+  ) async {
+    String? createdUsername;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FirstRunSetupScreen(
+          needsDatabaseConfiguration: false,
+          needsInitialAdmin: true,
+          isWorking: false,
+          onSaveDatabase: ({
+            required String host,
+            required int port,
+            required String database,
+            required String username,
+            required String password,
+          }) async {},
+          onCreateAdmin: (username, _) async {
+            createdUsername = username;
+          },
+        ),
+      ),
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('initialAdminUsernameField')),
+      'a',
+    );
+    await tester.enterText(
+      find.byKey(const Key('initialAdminPasswordField')),
+      'pass',
+    );
+    await tester.tap(find.byKey(const Key('firstRunSubmitButton')));
+    await tester.pumpAndSettle();
+    expect(createdUsername, isNull);
+    expect(
+      find.text('Use 2–64 letters, numbers, dots, _ or -.'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(
+      find.byKey(const Key('initialAdminUsernameField')),
+      'ab',
+    );
+    await tester.tap(find.byKey(const Key('firstRunSubmitButton')));
+    await tester.pumpAndSettle();
+    expect(createdUsername, 'ab');
+  });
+
   testWidgets('packaged setup never asks the owner for PostgreSQL details', (
     tester,
   ) async {

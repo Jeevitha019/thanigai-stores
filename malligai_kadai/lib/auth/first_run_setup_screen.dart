@@ -213,7 +213,7 @@ class _FirstRunSetupScreenState extends State<FirstRunSetupScreen> {
                         manualDatabaseConfiguration
                             ? 'Credentials are stored in Windows secure storage. After PostgreSQL connects, pending safe migrations are applied. Thanigai Stores will not create, reset, or delete a database.'
                             : configuringDatabase
-                            ? 'Select Retry to rerun local setup. No PostgreSQL download or Administrator access is needed. If it keeps failing, share %LOCALAPPDATA%\\Malligai Kadai\\database-setup.log and backend-startup.log with support. Existing shop data is preserved.'
+                            ? 'Select Retry to rerun local setup. No PostgreSQL download or Administrator access is needed. If it keeps failing, share %LOCALAPPDATA%\\Thanigai Stores\\database-setup.log and backend-startup.log with support. Existing shop data is preserved.'
                             : 'Choose a unique username and a strong password. Only a bcrypt password hash is saved.',
                         textAlign: TextAlign.center,
                         style: const TextStyle(
@@ -318,13 +318,13 @@ class _FirstRunSetupScreenState extends State<FirstRunSetupScreen> {
       textCapitalization: TextCapitalization.none,
       decoration: const InputDecoration(
         labelText: 'Admin username',
-        helperText: '3–64 letters, numbers, dots, _ or -',
+        helperText: '2–64 letters, numbers, dots, _ or -',
         border: OutlineInputBorder(),
       ),
       validator: (value) =>
           value == null ||
-              !RegExp(r'^[A-Za-z0-9._-]{3,64}$').hasMatch(value.trim())
-          ? 'Use 3–64 letters, numbers, dots, _ or -.'
+              !RegExp(r'^[A-Za-z0-9._-]{2,64}$').hasMatch(value.trim())
+          ? 'Use 2–64 letters, numbers, dots, _ or -.'
           : null,
     ),
     const SizedBox(height: 12),

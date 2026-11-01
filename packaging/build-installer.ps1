@@ -1,10 +1,14 @@
 param(
   [string]$Flutter = 'C:\flutter\flutter\bin\flutter.bat',
   [string]$Node = 'C:\Program Files\nodejs\node.exe',
-  [string]$PostgreSqlRoot = 'C:\Program Files\PostgreSQL\18'
+  [string]$PostgreSqlRoot = 'C:\Program Files\PostgreSQL\18',
+  [string]$OutputBaseFilename = 'ThanigaiStores-Setup'
 )
 
 $ErrorActionPreference = 'Stop'
+if ($OutputBaseFilename -notmatch '^[A-Za-z0-9_-]+$') {
+  throw 'OutputBaseFilename may contain only letters, numbers, hyphens, and underscores.'
+}
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $flutterProject = Join-Path $projectRoot 'malligai_kadai'
 $backendProject = Join-Path $projectRoot 'backend'
@@ -128,7 +132,6 @@ if (Test-Path -LiteralPath $stageRoot) {
   Remove-Item -LiteralPath $stageRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Path $payloadRoot,$backendPayload,$backendBuild,$runtimeBackend,$databaseTools,$postgresqlRuntime,$artifactRoot -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'manage-postgresql.ps1') -Destination $databaseTools
 Write-Host ("Staging the PostgreSQL server runtime ({0}) without development databases or pgAdmin..." -f $postgresVersion)
 foreach ($directory in @('bin','lib','share')) {
   Copy-Item -LiteralPath (Join-Path $PostgreSqlRoot $directory) -Destination $postgresqlRuntime -Recurse -Force
@@ -168,9 +171,14 @@ $releaseBackendDist = Join-Path $releaseBackend 'dist'
 if (Test-Path -LiteralPath $releaseBackendDist) {
   Remove-Item -LiteralPath $releaseBackendDist -Recurse -Force
 }
+$releaseBackendMigrations = Join-Path $releaseBackend 'migrations'
+if (Test-Path -LiteralPath $releaseBackendMigrations) {
+  Remove-Item -LiteralPath $releaseBackendMigrations -Recurse -Force
+}
 New-Item -ItemType Directory -Path $releaseBackend -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $backendBuild 'dist') -Destination $releaseBackend -Recurse -Force
 Copy-Item -Path (Join-Path $releaseDirectory '*') -Destination $payloadRoot -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'manage-postgresql.ps1') -Destination $databaseTools -Force
 Write-Host ("Bundling app-local Microsoft Visual C++ runtime {0}..." -f $vcRuntime.Version)
 Copy-Item -Path (Join-Path $vcRuntime.Path '*.dll') `
   -Destination $postgresqlCrtPayload -Force
@@ -197,9 +205,9 @@ Get-ChildItem -LiteralPath (Join-Path $postgresqlRuntime 'bin') -File |
   Remove-Item -Force
 Remove-Item -LiteralPath (Join-Path $postgresqlRuntime 'share\doc') -Recurse -Force -ErrorAction SilentlyContinue
 
-Write-Host 'Compiling MalligaiKadai-Setup.exe...'
-$installer = Join-Path $artifactRoot 'MalligaiKadai-Setup.exe'
-$backupInstaller = Join-Path $artifactRoot 'MalligaiKadai-Setup-Backup.exe'
+Write-Host ("Compiling {0}.exe..." -f $OutputBaseFilename)
+$installer = Join-Path $artifactRoot "$OutputBaseFilename.exe"
+$backupInstaller = Join-Path $artifactRoot "$OutputBaseFilename-Backup.exe"
 if (
   (Test-Path -LiteralPath $installer -PathType Leaf) -and
   -not (Test-Path -LiteralPath $backupInstaller -PathType Leaf)
@@ -207,7 +215,7 @@ if (
   Copy-Item -LiteralPath $installer -Destination $backupInstaller
   Write-Host ("Preserved the previous installer as: {0}" -f $backupInstaller)
 }
-& $iscc "/DAppVersion=$appVersion" $iss
+& $iscc "/DAppVersion=$appVersion" "/F$OutputBaseFilename" "/O$artifactRoot" $iss
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
 
 if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {

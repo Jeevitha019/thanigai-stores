@@ -28,7 +28,7 @@ async function start(): Promise<void> {
     );
   } catch (error) {
     const category = getDatabaseStartupFailureCategory(error);
-    console.error(`MALLIGAI_DB_STARTUP_FAILURE=${category}`);
+    console.error(`THANIGAI_DB_STARTUP_FAILURE=${category}`);
     console.error(
       `[startup] database_and_migrations_failed_ms=${Math.round(performance.now() - startupStartedAt)} category=${category}`,
     );
@@ -87,7 +87,7 @@ async function start(): Promise<void> {
   requestShutdown = shutdown;
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
-  if (process.env.MALLIGAI_SUPERVISED === '1') {
+  if (process.env.THANIGAI_SUPERVISED === '1') {
     parentMonitor = setInterval(() => {
       try {
         process.kill(process.ppid, 0);
@@ -105,7 +105,7 @@ async function start(): Promise<void> {
 
   server.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EADDRINUSE') {
-      console.error('MALLIGAI_API_STARTUP_FAILURE=port_in_use');
+      console.error('THANIGAI_API_STARTUP_FAILURE=port_in_use');
     }
     console.error(`Unable to start the API server: ${error.message}`);
     if (parentMonitor) clearInterval(parentMonitor);

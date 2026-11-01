@@ -38,6 +38,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   bool _needsDatabaseConfiguration = false;
   bool _needsInitialAdmin = false;
   bool _isWorking = false;
+  bool _isValidatingSession = false;
   bool _launchSessionCleared = false;
   Timer? _sessionExpiryTimer;
 
@@ -70,6 +71,8 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   }
 
   Future<void> _validateSessionOnResume() async {
+    if (_isValidatingSession || _user == null) return;
+    _isValidatingSession = true;
     try {
       final token = await _authGateway.readToken();
       if (token == null || token.isEmpty) {
@@ -81,6 +84,8 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       if (error.statusCode == 401) await _expireSession();
     } catch (_) {
       // A temporary network failure must not invalidate a still-live session.
+    } finally {
+      _isValidatingSession = false;
     }
   }
 
@@ -126,7 +131,9 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       _setLoadingMessage('Preparing your local shop database...');
       _backendSettings = await supervisor.loadOrInitializeSettings();
       _setLoadingMessage('Connecting to your shop...');
-      await supervisor.startAndWait(settings: _backendSettings);
+      _backendSettings = await supervisor.startAndWait(
+        settings: _backendSettings,
+      );
       _useSelectedApiPort(supervisor);
       if (!mounted) return;
       _setLoadingMessage('Checking your sign-in...');
@@ -152,7 +159,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       if (mounted) {
         setState(() {
           _needsDatabaseConfiguration = true;
-          _backendError = 'Thanigai Stores could not finish preparing your shop. Select Retry to try again. Review %LOCALAPPDATA%\\Malligai Kadai\\database-setup.log and backend-startup.log for details.';
+          _backendError = 'Thanigai Stores could not finish preparing your shop. Select Retry to try again. Review %LOCALAPPDATA%\\Thanigai Stores\\database-setup.log and backend-startup.log for details.';
           _isLoading = false;
         });
       }
@@ -181,7 +188,9 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
         password: password,
       );
       _backendSettings = await supervisor.readSettings();
-      await supervisor.startAndWait(settings: _backendSettings);
+      _backendSettings = await supervisor.startAndWait(
+        settings: _backendSettings,
+      );
       _useSelectedApiPort(supervisor);
       _needsInitialAdmin = await InitialAdminSetupApi(
         setupToken: _backendSettings!.initialSetupToken,
@@ -228,7 +237,9 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     });
     try {
       _backendSettings ??= await supervisor.loadOrInitializeSettings();
-      await supervisor.startAndWait(settings: _backendSettings);
+      _backendSettings = await supervisor.startAndWait(
+        settings: _backendSettings,
+      );
       _useSelectedApiPort(supervisor);
       _needsInitialAdmin = await InitialAdminSetupApi(
         setupToken: _backendSettings!.initialSetupToken,
@@ -258,7 +269,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       if (mounted) {
         setState(() {
           _needsDatabaseConfiguration = true;
-          _backendError = 'Could not complete local database setup. Select Retry and review %LOCALAPPDATA%\\Malligai Kadai\\database-setup.log and backend-startup.log.';
+          _backendError = 'Could not complete local database setup. Select Retry and review %LOCALAPPDATA%\\Thanigai Stores\\database-setup.log and backend-startup.log.';
           _isWorking = false;
           _isLoading = false;
         });

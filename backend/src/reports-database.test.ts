@@ -59,6 +59,7 @@ before(async () => {
     '012_void_invoices.sql',
     '013_product_selling_quantities.sql',
     '014_stock_batches.sql',
+    '016_stock_purchase_units.sql',
   ]) {
     await testPool.query(
       await readFile(

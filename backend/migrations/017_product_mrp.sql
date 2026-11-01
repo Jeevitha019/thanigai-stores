@@ -1,0 +1,3 @@
+ALTER TABLE products
+  ADD COLUMN IF NOT EXISTS mrp NUMERIC(12, 2)
+    CHECK (mrp IS NULL OR mrp >= 0);
